@@ -1,11 +1,13 @@
 #include "BaseBinaryStar.h"
+#include "CircumbinaryDisk.h"
 #include <fenv.h>
+#include <algorithm>
 
 #include "vector3d.h"
 
+
 // gsl includes
 #include <gsl/gsl_poly.h>
-
 
 /* Constructor
  *
@@ -268,6 +270,8 @@ void BaseBinaryStar::SetRemainingValues() {
     // Initialise other parameters
     m_SemiMajorAxisPrev           = m_SemiMajorAxis;
     m_EccentricityPrev            = m_Eccentricity;
+    m_SemiMajorAxisPreRLOF        = m_SemiMajorAxis;
+    m_EccentricityPreRLOF         = m_Eccentricity;
 
     // initial binary parameters - kept constant as a record of the initial parameters of the binary
     m_SemiMajorAxisInitial        = m_SemiMajorAxis;
@@ -282,12 +286,15 @@ void BaseBinaryStar::SetRemainingValues() {
     m_SemiMajorAxisAtDCOFormation = DEFAULT_INITIAL_DOUBLE_VALUE;
     m_EccentricityAtDCOFormation  = DEFAULT_INITIAL_DOUBLE_VALUE;
 
+    m_RestartTimestepAfterImmediateEvent           = false;
+
     double momentOfInertia1       = m_Star1->CalculateMomentOfInertiaAU();
     double momentOfInertia2       = m_Star2->CalculateMomentOfInertiaAU();
 
     m_TotalEnergy                 = CalculateTotalEnergy(m_SemiMajorAxis, m_Star1->Mass(), m_Star2->Mass(), m_Star1->Omega(), m_Star2->Omega(), momentOfInertia1, momentOfInertia2);
 
     m_TotalAngularMomentum        = CalculateAngularMomentum(m_SemiMajorAxis, m_Eccentricity, m_Star1->Mass(), m_Star2->Mass(), m_Star1->Omega(), m_Star2->Omega(), momentOfInertia1, momentOfInertia2);
+    m_TotalAngularMomentumPreRLOF = m_TotalAngularMomentum;
     m_TotalAngularMomentumPrev    = m_TotalAngularMomentum;
     
     if (OPTIONS->CHEMode() != CHE_MODE::NONE) {                                                                                                         // CHE enabled?
@@ -524,6 +531,15 @@ COMPAS_VARIABLE BaseBinaryStar::BinaryPropertyValue(const T_ANY_PROPERTY p_Prope
     switch (property) {                                                                                                 // which property?
 
         case BINARY_PROPERTY::CIRCULARIZATION_TIMESCALE:                            value = CircularizationTimescale();                                         break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMED:                               value = CircumbinaryDiskFormed();                                         break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_INITIAL_MASS:                          value = CircumbinaryDiskInitialMass();                                    break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_1:                      value = CircumbinaryDiskMassRetained1();                                  break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_2:                      value = CircumbinaryDiskMassRetained2();                                  break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_SUPPLIED:                        value = CircumbinaryDiskMassSupplied();                                   break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_SEMI_MAJOR_AXIS_PRE:                  value = CircumbinaryDiskSemiMajorAxisPre();                               break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_SEMI_MAJOR_AXIS_POST:                 value = CircumbinaryDiskSemiMajorAxisPost();                              break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_ECCENTRICITY_PRE:                     value = CircumbinaryDiskEccentricityPre();                                break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_ECCENTRICITY_POST:                    value = CircumbinaryDiskEccentricityPost();                               break;
         case BINARY_PROPERTY::COMMON_ENVELOPE_AT_LEAST_ONCE:                        value = CEAtLeastOnce();                                                    break;
         case BINARY_PROPERTY::COMMON_ENVELOPE_EVENT_COUNT:                          value = CommonEnvelopeEventCount();                                         break;
         case BINARY_PROPERTY::UNBOUND:                                              value = Unbound();                                                          break;
@@ -987,10 +1003,9 @@ void BaseBinaryStar::SetPostCEEValues(const double p_SemiMajorAxis,
 	m_CEDetails.postCEE.rocheLobe1to2 = p_RocheLobe1to2;
 	m_CEDetails.postCEE.rocheLobe2to1 = p_RocheLobe2to1;
 
-    if (utils::Compare(m_Star1->RadiusPostCEE(), m_CEDetails.postCEE.rocheLobe1to2) >= 0 ||         // Check for RLOF immediately after the CEE
-        utils::Compare(m_Star2->RadiusPostCEE(), m_CEDetails.postCEE.rocheLobe2to1) >= 0) {
-        m_RLOFDetails.immediateRLOFPostCEE = true;
-    }
+    m_RLOFDetails.immediateRLOFPostCEE =
+        utils::Compare(m_Star1->RadiusPostCEE(), m_CEDetails.postCEE.rocheLobe1to2) >= 0 ||         // Check for RLOF immediately after the CEE
+        utils::Compare(m_Star2->RadiusPostCEE(), m_CEDetails.postCEE.rocheLobe2to1) >= 0;
 }
 
 
@@ -1528,6 +1543,503 @@ void BaseBinaryStar::EvaluateSupernovae() {
 
 
 /*
+ * Update values set by SetPostCEEValues() to account for binary-CBD interaction
+ *
+ * void SetPostCBDValues(const double p_SemiMajorAxisAU,
+ *                       const double p_EccentricityAfterCBD,
+ *                       const double p_Mass1AfterCBD,
+ *                       const double p_Mass2AfterCBD)
+ *
+ * @param   [IN]    p_SemiMajorAxisAU         Post-CBD semi-major axis (AU)
+ * @param   [IN]    p_EccentricityAfterCBD    Post-CBD eccentricity
+ * @param   [IN]    p_Mass1AfterCBD           Post-CBD mass of star 1 (Msol)
+ * @param   [IN]    p_Mass2AfterCBD           Post-CBD mass of star 2 (Msol)
+ */
+void BaseBinaryStar::SetPostCBDValues(const double p_SemiMajorAxisAU,
+                                      const double p_EccentricityAfterCBD,
+                                      const double p_Mass1AfterCBD,
+                                      const double p_Mass2AfterCBD) {
+
+    m_SemiMajorAxis = p_SemiMajorAxisAU;
+    m_Eccentricity  = p_EccentricityAfterCBD;
+
+    const double postCBDPeriastronAU = m_SemiMajorAxis * (1.0 - p_EccentricityAfterCBD);
+    const double rocheLobe1AU        = postCBDPeriastronAU * CalculateRocheLobeRadius_Static(p_Mass1AfterCBD, p_Mass2AfterCBD);
+    const double rocheLobe2AU        = postCBDPeriastronAU * CalculateRocheLobeRadius_Static(p_Mass2AfterCBD, p_Mass1AfterCBD);
+    const double rocheLobe1Rsol = rocheLobe1AU * AU_TO_RSOL;
+    const double rocheLobe2Rsol = rocheLobe2AU * AU_TO_RSOL;
+
+    SetPostCEEValues(
+        m_SemiMajorAxis * AU_TO_RSOL,
+        m_CEDetails.postCEE.semiMajorAxisAfterStage1,
+        p_EccentricityAfterCBD,
+        rocheLobe1Rsol,
+        rocheLobe2Rsol
+    );
+}
+
+
+/*
+ * Apply optional post-CE circumbinary disk evolution, following the steps below:
+ *
+ * 1. Disk formation. The CircumbinaryDisk module assigns a fraction of the total
+ *    binary mass lost during CE and a fraction of the binary's pre-RLOF 
+ *    total angular momentum to the disk, then checks whether that angular
+ *    momentum is large enough for the material to orbit outside the adopted
+ *    inner disk radius. If not, COMPAS continues with the ordinary post-CE state.
+ *
+ * 2. Disk evolution. The CBD orbital evolution in response to accreted mass 
+ *    is calculated using spindler-c (based on Valli+2024), modified to account for Eddington-limited accretion.
+ *    Mass that is not accreted due to the Eddington limit is assumed to be ejected
+ *    from the vicinity of the accretor, carrying its component-specific orbital
+ *    angular momentum.  The Spindler formalism assumes that the initial CBD
+ *    reservoir is much smaller than the post-CE binary mass.
+ *
+ * INSTANTANEOUS applies the complete CBD interaction here.  TIMESTEPPED stores
+ * the active reservoir and returns; later timesteps process the reservoir before
+ * ordinary event checks, and the CBD row is logged only when the active disk is
+ * exhausted or truncated.
+ *
+ * This method translates COMPAS state to CBD inputs, applies the returned
+ * masses/orbit, handles possible AIC state mutation, and logs the event.
+ *
+ * void ApplyCircumbinaryDiskAfterCommonEnvelope(const STELLAR_TYPE p_StellarType1PreCE,
+ *                                                const STELLAR_TYPE p_StellarType2PreCE,
+ *                                                const double       p_Mass1PreCE,
+ *                                                const double       p_Mass2PreCE,
+ *                                                const double       p_Radius1PreCERsol,
+ *                                                const double       p_Radius2PreCERsol,
+ *                                                const bool         p_EnvelopeFlag1,
+ *                                                const bool         p_EnvelopeFlag2)
+ *
+ * @param   [IN]    p_StellarType1PreCE       Stellar type of star 1 immediately before CE
+ * @param   [IN]    p_StellarType2PreCE       Stellar type of star 2 immediately before CE
+ * @param   [IN]    p_Mass1PreCE              Mass of star 1 immediately before CE (Msol)
+ * @param   [IN]    p_Mass2PreCE              Mass of star 2 immediately before CE (Msol)
+ * @param   [IN]    p_Radius1PreCERsol        Radius of star 1 immediately before CE (Rsol)
+ * @param   [IN]    p_Radius2PreCERsol        Radius of star 2 immediately before CE (Rsol)
+ * @param   [IN]    p_EnvelopeFlag1           Whether star 1 had an envelope immediately before CE
+ * @param   [IN]    p_EnvelopeFlag2           Whether star 2 had an envelope immediately before CE
+ */
+void BaseBinaryStar::ApplyCircumbinaryDiskAfterCommonEnvelope(const STELLAR_TYPE p_StellarType1PreCE,
+                                                              const STELLAR_TYPE p_StellarType2PreCE,
+                                                              const double       p_Mass1PreCE,
+                                                              const double       p_Mass2PreCE,
+                                                              const double       p_Radius1PreCERsol,
+                                                              const double       p_Radius2PreCERsol,
+                                                              const bool         p_EnvelopeFlag1,
+                                                              const bool         p_EnvelopeFlag2) {
+
+    const CircumbinaryDisk::CommonEnvelopeChannel channel{CircumbinaryDisk::MakeCommonEnvelopeChannel(
+        p_StellarType1PreCE,
+        p_StellarType2PreCE,
+        p_Mass1PreCE,
+        p_Mass2PreCE,
+        p_Radius1PreCERsol,
+        p_Radius2PreCERsol,
+        p_EnvelopeFlag1,
+        p_EnvelopeFlag2
+    )};
+
+    if (!channel.supported) {
+        return;
+    }
+
+    const double circumbinaryDiskLifetime                     = OPTIONS->CircumbinaryDiskLifetime();
+    const CircumbinaryDisk::FormationOptions formationOptions{CircumbinaryDisk::MakeFormationOptionsFromCompasOptions()};
+
+    const double mass1PostCE             = m_Star1->Mass();
+    const double mass2PostCE             = m_Star2->Mass();
+    const double semiMajorAxisPostCERsol  = m_SemiMajorAxis * AU_TO_RSOL;
+    // The formation test uses the pre-RLOF orbit as the basis for the angular-momentum
+    // reservoir estimate. The post-CE separation is used only to define
+    // the inner CBD radius.
+    const CircumbinaryDisk::FormationInput circumbinaryDiskFormationInput{
+        channel,
+        p_Mass1PreCE + p_Mass2PreCE,
+        mass1PostCE + mass2PostCE,
+        m_SemiMajorAxisPreRLOF * AU_TO_RSOL,
+        semiMajorAxisPostCERsol,
+        m_EccentricityPreRLOF,
+        m_TotalAngularMomentumPreRLOF,
+        formationOptions
+    };
+
+    const CircumbinaryDisk::FormationResult formationResult{CircumbinaryDisk::EvaluateFormation(circumbinaryDiskFormationInput)};
+    if (!formationResult.forms) {
+        return;
+    }
+
+    // The formation step defines the intended CBD reservoir.  In TIMESTEPPED
+    // mode the mass actually supplied can be smaller if another binary event
+    // truncates the disk before that reservoir is exhausted.
+    const double suppliedMassMsol = formationResult.suppliedMassMsol;
+
+    m_CircumbinaryDiskDetails.formed = true;
+    m_CircumbinaryDiskDetails.initialMass = suppliedMassMsol;
+    m_CircumbinaryDiskDetails.massSupplied = 0.0;
+    m_CircumbinaryDiskDetails.massRetained1 = 0.0;
+    m_CircumbinaryDiskDetails.massRetained2 = 0.0;
+    m_CircumbinaryDiskDetails.semiMajorAxisPre = semiMajorAxisPostCERsol;
+    m_CircumbinaryDiskDetails.semiMajorAxisPost = semiMajorAxisPostCERsol;
+    m_CircumbinaryDiskDetails.eccentricityPre = m_Eccentricity;
+    m_CircumbinaryDiskDetails.eccentricityPost = m_Eccentricity;
+
+    if (OPTIONS->CircumbinaryDiskEvolutionMode() == CIRCUMBINARY_DISK_EVOLUTION_MODE::TIMESTEPPED) {
+        // Finite-lifetime mode: store the reservoir and let future COMPAS
+        // timesteps consume it.  This avoids freezing stellar radii/types and
+        // Eddington limits for the entire CBD lifetime at the CE event.
+        m_ActiveCircumbinaryDisk.active = true;
+        m_ActiveCircumbinaryDisk.totalSuppliedMass = suppliedMassMsol;
+        m_ActiveCircumbinaryDisk.remainingSuppliedMass = suppliedMassMsol;
+        m_ActiveCircumbinaryDisk.supplyRate = suppliedMassMsol / circumbinaryDiskLifetime;
+        m_ActiveCircumbinaryDisk.remainingDuration = circumbinaryDiskLifetime;
+        m_RestartTimestepAfterImmediateEvent = true;
+        return;
+    }
+
+    (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_CEE);
+
+    const double radius1PostCE = m_Star1->Radius();
+    const double radius2PostCE = m_Star2->Radius();
+    const STELLAR_TYPE stellarType1PostCE = m_Star1->StellarType();
+    const STELLAR_TYPE stellarType2PostCE = m_Star2->StellarType();
+    const CircumbinaryDisk::EvolutionOptions evolutionOptions{CircumbinaryDisk::MakeEvolutionOptionsFromCompasOptions()};
+
+    double retainedMass1 = 0.0;
+    double retainedMass2 = 0.0;
+    // AIC can occur if either post-CE component is an ONe WD and CBD accretion
+    // pushes it to the Chandrasekhar-mass threshold. The CBD integrator stops
+    // at that mass so the ordinary COMPAS AIC/SN machinery can handle
+    // the stellar-type and mass changes before any remaining CBD
+    // reservoir is evolved.
+    const CircumbinaryDisk::StarLabel aicTargetStar = stellarType1PostCE == STELLAR_TYPE::OXYGEN_NEON_WHITE_DWARF
+                                                        ? CircumbinaryDisk::StarLabel::STAR_1
+                                                        : stellarType2PostCE == STELLAR_TYPE::OXYGEN_NEON_WHITE_DWARF
+                                                            ? CircumbinaryDisk::StarLabel::STAR_2
+                                                            : CircumbinaryDisk::StarLabel::NONE;
+    const CircumbinaryDisk::EvolutionInput initialEvolutionInput{
+        mass1PostCE,
+        mass2PostCE,
+        radius1PostCE,
+        radius2PostCE,
+        stellarType1PostCE,
+        stellarType2PostCE,
+        m_Eccentricity,
+        suppliedMassMsol,
+        circumbinaryDiskLifetime,
+        aicTargetStar,
+        evolutionOptions
+    };
+
+    const CircumbinaryDisk::EvolutionTrack initialTrack{CircumbinaryDisk::EvolveTrack(initialEvolutionInput)};
+    double finalMass1 = 0.0;
+    double finalMass2 = 0.0;
+
+    if (initialTrack.aicOccurred) {
+        const double semiMajorAxisAtAICFactor = initialTrack.semiMajorAxisFactor;
+        const double eccentricityAtAIC        = initialTrack.eccentricity;
+        const double mass1AtAIC               = initialTrack.mass1Msol;
+        const double mass2AtAIC               = initialTrack.mass2Msol;
+
+        retainedMass1 += mass1AtAIC - mass1PostCE;
+        retainedMass2 += mass2AtAIC - mass2PostCE;
+        // Move the binary to the CBD state at the instant of AIC.  The
+        // post-AIC continuation below starts from the live COMPAS state after
+        // EvaluateSupernovae() has resolved the event.
+        SetPostCBDValues(
+            m_SemiMajorAxis * semiMajorAxisAtAICFactor,
+            eccentricityAtAIC,
+            mass1AtAIC,
+            mass2AtAIC
+        );
+
+        ApplyCircumbinaryDiskMassChange(m_Star1, mass1AtAIC);
+        ApplyCircumbinaryDiskMassChange(m_Star2, mass2AtAIC);
+
+        EvaluateSupernovae();
+
+        (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_SN);
+
+        const double remainingDurationPostAIC = std::max(
+            circumbinaryDiskLifetime - initialTrack.elapsedTimeYears,
+            0.0
+        );
+        const double remainingSuppliedMassPostAIC = std::max(
+            suppliedMassMsol - initialTrack.suppliedMassMsol,
+            0.0
+        );
+
+        const double mass1PostAIC = m_Star1->Mass();
+        const double mass2PostAIC = m_Star2->Mass();
+
+        if (utils::Compare(remainingDurationPostAIC, 0.0) > 0 && utils::Compare(remainingSuppliedMassPostAIC, 0.0) > 0) {
+            // Continue the same physical disk after the AIC, but with the new
+            // compact-object type/mass/radius returned by COMPAS.  This matters
+            // because the Eddington limit depends on the accretor type.
+            const CircumbinaryDisk::EvolutionInput postAICEvolutionInput{
+                mass1PostAIC,
+                mass2PostAIC,
+                m_Star1->Radius(),
+                m_Star2->Radius(),
+                m_Star1->StellarType(),
+                m_Star2->StellarType(),
+                m_Eccentricity,
+                remainingSuppliedMassPostAIC,
+                remainingDurationPostAIC,
+                CircumbinaryDisk::StarLabel::NONE,
+                evolutionOptions
+            };
+
+            const CircumbinaryDisk::EvolutionTrack postAICTrack{CircumbinaryDisk::EvolveTrack(postAICEvolutionInput)};
+            finalMass1 = postAICTrack.mass1Msol;
+            finalMass2 = postAICTrack.mass2Msol;
+
+            retainedMass1 += finalMass1 - mass1PostAIC;
+            retainedMass2 += finalMass2 - mass2PostAIC;
+
+            SetPostCBDValues(
+                m_SemiMajorAxis * postAICTrack.semiMajorAxisFactor,
+                postAICTrack.eccentricity,
+                finalMass1,
+                finalMass2
+            );
+        }
+        else {
+            finalMass1 = mass1PostAIC;
+            finalMass2 = mass2PostAIC;
+        }
+    }
+    else {
+        finalMass1 = initialTrack.mass1Msol;
+        finalMass2 = initialTrack.mass2Msol;
+        retainedMass1 = finalMass1 - mass1PostCE;
+        retainedMass2 = finalMass2 - mass2PostCE;
+
+        SetPostCBDValues(
+            m_SemiMajorAxis * initialTrack.semiMajorAxisFactor,
+            initialTrack.eccentricity,
+            finalMass1,
+            finalMass2
+        );
+    }
+
+    m_CircumbinaryDiskDetails.massSupplied      = suppliedMassMsol;
+    m_CircumbinaryDiskDetails.massRetained1     = retainedMass1;
+    m_CircumbinaryDiskDetails.massRetained2     = retainedMass2;
+    m_CircumbinaryDiskDetails.semiMajorAxisPost = m_SemiMajorAxis * AU_TO_RSOL;
+    m_CircumbinaryDiskDetails.eccentricityPost  = m_Eccentricity;
+
+    ApplyCircumbinaryDiskMassChange(m_Star1, finalMass1);
+    ApplyCircumbinaryDiskMassChange(m_Star2, finalMass2);
+
+    (void)PrintCircumbinaryDisk();
+
+}
+
+
+/*
+ * Apply a CBD-driven stellar mass change through the normal COMPAS update path
+ *
+ * Non-compact accretors also have their effective initial mass, age, and
+ * rejuvenation state remapped after gaining mass.
+ *
+ * void ApplyCircumbinaryDiskMassChange(BinaryConstituentStar *p_Star,
+ *                                       const double           p_FinalMass)
+ *
+ * @param   [IN]    p_Star                     Star whose mass is to be updated
+ * @param   [IN]    p_FinalMass                Final stellar mass after CBD accretion (Msol)
+ */
+void BaseBinaryStar::ApplyCircumbinaryDiskMassChange(BinaryConstituentStar *p_Star, const double p_FinalMass) {
+
+    const double deltaMass = p_FinalMass - p_Star->Mass();
+    if (utils::Compare(deltaMass, 0.0) == 0) return;
+
+    const bool remapEffectiveInitialMass = utils::Compare(deltaMass, 0.0) > 0 && !p_Star->IsOneOf(COMPACT_OBJECTS);
+
+    (void)p_Star->UpdateAttributes(deltaMass, 0.0, false);
+
+    if (remapEffectiveInitialMass) {
+        p_Star->UpdateInitialMass();
+        p_Star->UpdateAgeAfterMassLoss();
+        p_Star->ApplyMassTransferRejuvenationFactor();
+        p_Star->UpdateAttributes(0.0, 0.0, true);
+    }
+}
+
+
+/*
+ * FinaliseActiveCircumbinaryDisk()
+ *
+ * Deactivate the active finite-duration CBD and print the event record.
+ * Instantaneous CBD evolution continues to print from
+ * ApplyCircumbinaryDiskAfterCommonEnvelope(); this helper is used only by the
+ * opt-in TIMESTEPPED mode.
+ *
+ * The post-CBD orbital fields are deliberately not sampled here from the
+ * current binary state.  They are cached immediately after each CBD increment
+ * in EvolveActiveCircumbinaryDiskOneTimestep().  This distinction matters when
+ * a later immediate event, such as a disruptive SN, terminates the disk: the CBD
+ * row should report the last state produced by CBD evolution, not the post-SN
+ * orbit.
+ *
+ * void FinaliseActiveCircumbinaryDisk()
+ */
+void BaseBinaryStar::FinaliseActiveCircumbinaryDisk() {
+
+    const double totalSuppliedMass = std::max(m_ActiveCircumbinaryDisk.totalSuppliedMass, 0.0);
+    const double completionTolerance = std::max(1.0e-12, 1.0e-10 * std::max(totalSuppliedMass, 1.0));
+
+    const bool completedByMass =
+        utils::Compare(totalSuppliedMass, 0.0) > 0 &&
+        utils::Compare(m_ActiveCircumbinaryDisk.remainingSuppliedMass, 0.0, completionTolerance) <= 0;
+
+    const bool completedByDuration =
+        utils::Compare(totalSuppliedMass, 0.0) > 0 &&
+        utils::Compare(m_ActiveCircumbinaryDisk.supplyRate, 0.0) > 0 &&
+        utils::Compare(m_ActiveCircumbinaryDisk.remainingDuration, 0.0) <= 0;
+
+    const bool completed = completedByMass || completedByDuration;
+
+    if (completed) {
+        // Under the constant-supply-rate prescription, exhausting the adopted
+        // lifetime and exhausting the intended reservoir are the same physical
+        // completion condition.  Clamp away numerical residuals so the logged
+        // supplied mass exactly matches the initial reservoir.
+        m_ActiveCircumbinaryDisk.remainingSuppliedMass = 0.0;
+        m_ActiveCircumbinaryDisk.remainingDuration     = 0.0;
+    }
+
+    m_CircumbinaryDiskDetails.massSupplied = completed
+        ? totalSuppliedMass
+        : std::max(totalSuppliedMass - m_ActiveCircumbinaryDisk.remainingSuppliedMass, 0.0);
+    m_ActiveCircumbinaryDisk.active = false;
+
+    (void)PrintCircumbinaryDisk();
+}
+
+
+/*
+ * EvolveActiveCircumbinaryDiskOneTimestep()
+ *
+ * Apply one finite-duration CBD increment during the current COMPAS timestep.
+ * This allows the stellar clock, wind mass loss, stellar radii/types, and
+ * Eddington limits to update between CBD increments instead of freezing those
+ * quantities for the full CBD lifetime at the CE event. The binary's orbital parameters
+ * can also change due to winds and tides.
+ *
+ * The disk mass supplied in this call is the smaller of supplyRate * dt and the
+ * remaining reservoir.  If CBD accretion triggers an AIC, the ordinary
+ * post-increment supernova check in EvaluateBinary() handles it.
+ *
+ * void EvolveActiveCircumbinaryDiskOneTimestep(const double p_Dt)
+ *
+ * @param   [IN]    p_Dt                       Current COMPAS timestep (Myr)
+ */
+void BaseBinaryStar::EvolveActiveCircumbinaryDiskOneTimestep(const double p_Dt) {
+
+    if (!m_ActiveCircumbinaryDisk.active) return;
+
+    const double dtYears = std::min(p_Dt * MYR_TO_YEAR, m_ActiveCircumbinaryDisk.remainingDuration);
+    const double totalSuppliedMass = std::max(m_ActiveCircumbinaryDisk.totalSuppliedMass, 0.0);
+    const double completionTolerance = std::max(1.0e-12, 1.0e-10 * std::max(totalSuppliedMass, 1.0));
+
+    const bool reservoirExhausted = utils::Compare(m_ActiveCircumbinaryDisk.remainingSuppliedMass, 0.0, completionTolerance) <= 0;
+    if (utils::Compare(dtYears, 0.0) <= 0 || reservoirExhausted) {
+        FinaliseActiveCircumbinaryDisk();
+        return;
+    }
+
+    const double suppliedThisStep = std::min(
+        m_ActiveCircumbinaryDisk.supplyRate * dtYears,
+        m_ActiveCircumbinaryDisk.remainingSuppliedMass
+    );
+
+    if (utils::Compare(suppliedThisStep, 0.0) <= 0) {
+        FinaliseActiveCircumbinaryDisk();
+        return;
+    }
+
+    const double mass1BeforeCBD = m_Star1->Mass();
+    const double mass2BeforeCBD = m_Star2->Mass();
+    const CircumbinaryDisk::EvolutionOptions evolutionOptions{CircumbinaryDisk::MakeEvolutionOptionsFromCompasOptions()};
+
+    const CircumbinaryDisk::EvolutionInput evolutionInput{
+        mass1BeforeCBD,
+        mass2BeforeCBD,
+        m_Star1->Radius(),
+        m_Star2->Radius(),
+        m_Star1->StellarType(),
+        m_Star2->StellarType(),
+        m_Eccentricity,
+        suppliedThisStep,
+        dtYears,
+        CircumbinaryDisk::StarLabel::NONE,
+        evolutionOptions
+    };
+
+    const CircumbinaryDisk::EvolutionTrack track{CircumbinaryDisk::EvolveTrack(evolutionInput)};
+
+    const double finalMass1 = track.mass1Msol;
+    const double finalMass2 = track.mass2Msol;
+
+    m_CircumbinaryDiskDetails.massRetained1 += finalMass1 - mass1BeforeCBD;
+    m_CircumbinaryDiskDetails.massRetained2 += finalMass2 - mass2BeforeCBD;
+
+    m_SemiMajorAxis = m_SemiMajorAxis * track.semiMajorAxisFactor;
+    m_Eccentricity  = track.eccentricity;
+
+    ApplyCircumbinaryDiskMassChange(m_Star1, finalMass1);
+    ApplyCircumbinaryDiskMassChange(m_Star2, finalMass2);
+
+    m_ActiveCircumbinaryDisk.remainingDuration = std::max(m_ActiveCircumbinaryDisk.remainingDuration - dtYears, 0.0);
+    m_ActiveCircumbinaryDisk.remainingSuppliedMass = std::max(m_ActiveCircumbinaryDisk.remainingSuppliedMass - suppliedThisStep, 0.0);
+
+    const bool completedByMass = utils::Compare(m_ActiveCircumbinaryDisk.remainingSuppliedMass, 0.0, completionTolerance) <= 0;
+    const bool completedByDuration = utils::Compare(m_ActiveCircumbinaryDisk.remainingDuration, 0.0) <= 0;
+
+    m_CircumbinaryDiskDetails.massSupplied      = std::max(
+        m_ActiveCircumbinaryDisk.totalSuppliedMass - m_ActiveCircumbinaryDisk.remainingSuppliedMass,
+        0.0
+    );
+    m_CircumbinaryDiskDetails.semiMajorAxisPost = m_SemiMajorAxis * AU_TO_RSOL;
+    m_CircumbinaryDiskDetails.eccentricityPost  = m_Eccentricity;
+
+    if (completedByMass || completedByDuration) {
+        FinaliseActiveCircumbinaryDisk();
+    }
+}
+
+
+
+/*
+ * Calculate post-common-envelope eccentricity from user prescription
+ *
+ * double CalculatePostCommonEnvelopeEccentricity()
+ *
+ * @return                                      Eccentricity to assign immediately after common envelope evolution
+ */
+double BaseBinaryStar::CalculatePostCommonEnvelopeEccentricity() const {
+
+    // The PRE_RLOF_CAP and PRE_RLOF_FRACTION prescriptions use the eccentricity
+    // stored at first RLOF contact, before any RLOF circularisation.  See InitialiseMassTransfer().
+    switch (OPTIONS->PostCommonEnvelopeEccentricityPrescription()) {
+        case POST_COMMON_ENVELOPE_ECCENTRICITY_PRESCRIPTION::PRE_RLOF_CAP: {
+            return std::min(m_EccentricityPreRLOF, OPTIONS->PostCommonEnvelopeEccentricityCap());
+        }
+        case POST_COMMON_ENVELOPE_ECCENTRICITY_PRESCRIPTION::PRE_RLOF_FRACTION: {
+            return OPTIONS->PostCommonEnvelopeEccentricityFraction() * m_EccentricityPreRLOF;
+        }
+        case POST_COMMON_ENVELOPE_ECCENTRICITY_PRESCRIPTION::CIRCULAR: {
+            return 0.0;
+        }
+    }
+
+    return 0.0;
+}
+
+
+/*
  * Resolve a Common Envelope Event
  *
  * The binary has entered a common envelope event. This function updates the binary parameters accordingly
@@ -1543,6 +2055,11 @@ void BaseBinaryStar::EvaluateSupernovae() {
  */
 void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
     
+    if (m_ActiveCircumbinaryDisk.active) {
+        // A new common-envelope event interrupts the finite-duration CBD.
+        FinaliseActiveCircumbinaryDisk();
+    }
+
     double alphaCE = OPTIONS->CommonEnvelopeAlpha();                                                                    // CE efficiency parameter
 
 	double eccentricity      = Eccentricity();								                                            // current eccentricity (before CEE)
@@ -1554,6 +2071,19 @@ void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
     double omegaSpin2_pre_CE = m_Star2->Omega();                                                                        // star2 spin (before CEE)
     
     double semiMajorAxisAfterStage1 = 0.0;                                                                              // semi-major axis after stage 1 (to remain zero unless using 2-stage CE formalism)
+    const STELLAR_TYPE stellarType1PreCE = m_Star1->StellarType();                                                        // state before the CE/CBD update
+    const STELLAR_TYPE stellarType2PreCE = m_Star2->StellarType();
+    const double mass1PreCE              = m_Star1->Mass();
+    const double mass2PreCE              = m_Star2->Mass();
+    const double radius1PreCERsol        = m_Star1->Radius();
+    const double radius2PreCERsol        = m_Star2->Radius();
+
+    // Clear stale CBD event state at the start of a fresh CE.  TIMESTEPPED
+    // active-disk bookkeeping is preserved; this flag is only used here to
+    // tell EvaluateBinary() whether this CE produced an instantaneous CBD.
+    if (!m_ActiveCircumbinaryDisk.active) {
+        m_CircumbinaryDiskDetails.formed = false;
+    }
     
     bool isDonorMS = false;                                                                                             // check for main sequence donor
     if (OPTIONS->AllowMainSequenceStarToSurviveCommonEnvelope()) {                                                      // allow main sequence stars to survive CEE?
@@ -1694,11 +2224,12 @@ void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
             THROW_ERROR(ERROR::UNKNOWN_CE_FORMALISM);                                                                   // throw error
     }
     
-    double rRLdfin1     = m_SemiMajorAxis * CalculateRocheLobeRadius_Static(m_Mass1Final, m_Mass2Final);                // Roche-lobe radius in AU after CEE, seen by star1
-    double rRLdfin2     = m_SemiMajorAxis * CalculateRocheLobeRadius_Static(m_Mass2Final, m_Mass1Final);                // Roche-lobe radius in AU after CEE, seen by star2
+    m_Eccentricity      = CalculatePostCommonEnvelopeEccentricity();                                                // assign post-CE eccentricity according to user prescription
+    double postCEPeriastronAU = m_SemiMajorAxis * (1.0 - m_Eccentricity);                                               // Roche lobes should be checked at periastron
+    double rRLdfin1     = postCEPeriastronAU * CalculateRocheLobeRadius_Static(m_Mass1Final, m_Mass2Final);             // Roche-lobe radius in AU after CEE, seen by star1
+    double rRLdfin2     = postCEPeriastronAU * CalculateRocheLobeRadius_Static(m_Mass2Final, m_Mass1Final);             // Roche-lobe radius in AU after CEE, seen by star2
     double rRLdfin1Rsol = rRLdfin1 * AU_TO_RSOL;                                                                        // Roche-lobe radius in Rsol after CEE, seen by star1
     double rRLdfin2Rsol = rRLdfin2 * AU_TO_RSOL;                                                                        // Roche-lobe radius in Rsol after CEE, seen by star2
-    m_Eccentricity      = 0.0;                                                                                          // we assume that a common envelope event (CEE) circularises the binary
 
     m_Star1->ResolveCommonEnvelopeAccretion(m_Mass1Final);                                                              // update star1's mass after CE accretion
     m_Star2->ResolveCommonEnvelopeAccretion(m_Mass2Final);                                                              // update star2's mass after CE accretion
@@ -1754,10 +2285,20 @@ void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
         m_Star2->SetPostCEEValues();                                                                                    // squirrel away post CEE stellar values for star 2
         SetPostCEEValues(m_SemiMajorAxis * AU_TO_RSOL, semiMajorAxisAfterStage1 * AU_TO_RSOL, m_Eccentricity, rRLdfin1Rsol, rRLdfin2Rsol); // squirrel away post CEE binary values (checks for post-CE RLOF, so should be done at end)
 
-        if (m_RLOFDetails.immediateRLOFPostCEE == true && !OPTIONS->AllowImmediateRLOFpostCEToSurviveCommonEnvelope()) {// is there immediate post-CE RLOF which is not allowed?
+        const bool allowImmediateRLOFPostCE = OPTIONS->AllowImmediateRLOFpostCEToSurviveCommonEnvelope();
+        if ((!m_RLOFDetails.immediateRLOFPostCEE || allowImmediateRLOFPostCE) && OPTIONS->CircumbinaryDisk()) {                // only evolve CBDs for CE survivors
+            // The CBD framework is a post-CE process.  It is applied only after
+            // the ordinary CE calculation has produced a detached survivor; if
+            // the CBD then changes the orbit enough to create immediate RLOF,
+            // the same post-CE RLOF survival rule is checked again below.
+            ApplyCircumbinaryDiskAfterCommonEnvelope(stellarType1PreCE, stellarType2PreCE, mass1PreCE, mass2PreCE, radius1PreCERsol, radius2PreCERsol, envelopeFlag1, envelopeFlag2);
+        }
+
+        if (m_RLOFDetails.immediateRLOFPostCEE && !allowImmediateRLOFPostCE) {
             m_MassTransferTrackerHistory = MT_TRACKING::MERGER;
             m_Flags.stellarMerger        = true;
         }
+
     }
     
     (void)PrintCommonEnvelope();                                                                                        // print (log) common envelope details
@@ -2199,6 +2740,14 @@ void BaseBinaryStar::CalculateMassTransfer(const double p_Dt) {
                                                                                                                                 // no
             m_MassTransferTrackerHistory = m_Donor == m_Star1 ? MT_TRACKING::STABLE_1_TO_2_SURV : MT_TRACKING::STABLE_2_TO_1_SURV; // record what happened - for later printing
 
+            if (m_ActiveCircumbinaryDisk.active && m_MassTransferTimescale == MT_TIMESCALE::THERMAL) {
+                // The CBD prescription is not coupled to the large discrete
+                // binary transformation represented by thermal-timescale stable
+                // MT.  Nuclear-timescale stable MT may continue alongside the
+                // active CBD.
+                FinaliseActiveCircumbinaryDisk();
+            }
+
             double massGainAccretor  = -massDiffDonor * m_FractionAccreted;                                                     // set accretor mass gain to mass loss * conservativeness
             double omegaDonor_pre_MT = m_Donor->Omega();                                                                        // used if full donor envelope is removed
 
@@ -2359,10 +2908,27 @@ void BaseBinaryStar::InitialiseMassTransfer() {
     m_MassTransferTimescale      = MT_TIMESCALE::NONE;
     m_MassLossRateInRLOF         = 0.0;
 
+    // Store the binary state before this call can circularise the orbit, so
+    // post-CE eccentricity prescriptions can reference the pre-RLOF state.
+    const bool   wasRLOF                    = m_RLOFDetails.isRLOF;
+    const double eccentricityAtRLOFCheck    = m_Eccentricity;
+    const double semiMajorAxisAtRLOFCheck   = m_SemiMajorAxis;
+    const double angularMomentumAtRLOFCheck = CalculateAngularMomentum();
+
     m_Star1->InitialiseMassTransfer(m_CEDetails.CEEnow, m_SemiMajorAxis, m_Eccentricity);                                       // initialise mass transfer for star1
     m_Star2->InitialiseMassTransfer(m_CEDetails.CEEnow, m_SemiMajorAxis, m_Eccentricity);                                       // initialise mass transfer for star2
     
-    if (m_Star1->IsRLOF() || m_Star2->IsRLOF()) {                                                                               // either star overflowing its Roche Lobe?
+    const bool isRLOF = m_Star1->IsRLOF() || m_Star2->IsRLOF();
+
+    if (isRLOF && !wasRLOF) {
+        m_EccentricityPreRLOF          = eccentricityAtRLOFCheck;                                                                // store eccentricity before any RLOF circularisation
+        m_SemiMajorAxisPreRLOF         = semiMajorAxisAtRLOFCheck;                                                               // store semi-major axis before any RLOF circularisation
+        m_TotalAngularMomentumPreRLOF  = angularMomentumAtRLOFCheck;
+    }
+
+    m_RLOFDetails.isRLOF = isRLOF;
+
+    if (isRLOF) {                                                                                                                // either star overflowing its Roche Lobe?
                                                                                                                                 // yes - mass transfer if not both CH
         if (OPTIONS->CHEMode() != CHE_MODE::NONE && HasTwoOf({STELLAR_TYPE::CHEMICALLY_HOMOGENEOUS})) {                         // CHE enabled and both stars CH?
                                                                                                                                 // yes
@@ -3251,8 +3817,16 @@ double BaseBinaryStar::ChooseTimestep(const double p_Factor) {
     }
 
     dt *= OPTIONS->TimestepMultiplier() * p_Factor;
+    dt = std::max(std::round(dt / TIMESTEP_QUANTUM) * TIMESTEP_QUANTUM, TIDES_MINIMUM_FRACTIONAL_NUCLEAR_TIME * NUCLEAR_MINIMUM_TIMESTEP); // quantised and not less than minimum
 
-    return std::max(std::round(dt / TIMESTEP_QUANTUM) * TIMESTEP_QUANTUM, TIDES_MINIMUM_FRACTIONAL_NUCLEAR_TIME * NUCLEAR_MINIMUM_TIMESTEP); // quantised and not less than minimum
+    if (m_ActiveCircumbinaryDisk.active) {
+        dt = std::min(dt, m_ActiveCircumbinaryDisk.remainingDuration * YEAR_TO_MYR);
+        if (utils::Compare(m_ActiveCircumbinaryDisk.supplyRate, 0.0) > 0) {
+            dt = std::min(dt, CircumbinaryDisk::MAXIMUM_SUPPLIED_MASS_PER_TIMESTEP_MSOL / m_ActiveCircumbinaryDisk.supplyRate * YEAR_TO_MYR);
+        }
+    }
+
+    return dt;
 }
 
 
@@ -3275,6 +3849,19 @@ double BaseBinaryStar::ChooseTimestep(const double p_Factor) {
  */
 void BaseBinaryStar::EvaluateBinary(const double p_Dt) {
 
+    // Finite-duration CBD evolution is applied before ordinary mass-transfer
+    // checks in each timestep.  This lets a disk-driven orbital change affect
+    // whether ordinary COMPAS event checks, such as RLOF/SN handling, occur in
+    // that timestep.
+    if (m_ActiveCircumbinaryDisk.active && !m_RestartTimestepAfterImmediateEvent) {
+        EvolveActiveCircumbinaryDiskOneTimestep(p_Dt);
+
+        if (m_RestartTimestepAfterImmediateEvent) return;
+
+        m_SemiMajorAxisPrev = m_SemiMajorAxis;
+        m_EccentricityPrev  = m_Eccentricity;
+    }
+
     CalculateMassTransfer(p_Dt);                                                                                        // calculate mass transfer if necessary
 
     (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_MT);                                                 // print (log) detailed output
@@ -3288,13 +3875,23 @@ void BaseBinaryStar::EvaluateBinary(const double p_Dt) {
         && !HasOneOf({STELLAR_TYPE::MASSLESS_REMNANT}) ) {                                                              // yes - avoid CEE if CH+CH or one star is a massless remnant
 
         ResolveCommonEnvelopeEvent();                                                                                   // resolve CEE - immediate event
-        (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_CEE);                                            // print (log) detailed output
+        const bool instantaneousCBDEvolved =                                                                              // did this CE run a full instantaneous CBD?
+            OPTIONS->CircumbinaryDiskEvolutionMode() == CIRCUMBINARY_DISK_EVOLUTION_MODE::INSTANTANEOUS &&
+            m_CircumbinaryDiskDetails.formed;
+        (void)PrintDetailedOutput(m_Id, instantaneousCBDEvolved ? BSE_DETAILED_RECORD_TYPE::POST_CBD : BSE_DETAILED_RECORD_TYPE::POST_CEE); // print (log) detailed output
     }
     else if (m_Star1->IsSNevent() || m_Star2->IsSNevent()) {
+        const SN_EVENT supernovaEvents =                                                                                // stash current SN types before EvaluateSupernovae() clears them
+            (m_Star1->IsSNevent() ? m_Star1->SN_Type() : SN_EVENT::NONE) |
+            (m_Star2->IsSNevent() ? m_Star2->SN_Type() : SN_EVENT::NONE);
         EvaluateSupernovae();                                                                                           // evaluate supernovae (both stars) - immediate event
         (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_SN);                                             // print (log) detailed output
         if (HasOneOf({ STELLAR_TYPE::NEUTRON_STAR })) {
             (void)PrintPulsarEvolutionParameters(BSE_PULSAR_RECORD_TYPE::POST_SN);                                      // print (log) pulsar evolution parameters 
+        }
+        if (m_ActiveCircumbinaryDisk.active &&                                                                           // a live CBD survives non-disrupting bound events such as AIC
+            (CircumbinaryDisk::SupernovaEventsDisruptDisk(supernovaEvents) || IsUnbound())) {
+            FinaliseActiveCircumbinaryDisk();                                                                           // finalise and log the truncated CBD
         }
     }
     else {
@@ -3314,21 +3911,30 @@ void BaseBinaryStar::EvaluateBinary(const double p_Dt) {
     if (!StellarMerger() || (HasOneOf({ STELLAR_TYPE::MASSLESS_REMNANT }) && OPTIONS->EvolveMainSequenceMergers())) {   // check stellar merger or evolving MS mergers
                                                                                                                         // continue evolution
         if ((m_Star1->IsSNevent() || m_Star2->IsSNevent())) {
+            const SN_EVENT supernovaEvents =                                                                            // stash current SN types before EvaluateSupernovae() clears them
+                (m_Star1->IsSNevent() ? m_Star1->SN_Type() : SN_EVENT::NONE) |
+                (m_Star2->IsSNevent() ? m_Star2->SN_Type() : SN_EVENT::NONE);
             EvaluateSupernovae();                                                                                       // evaluate supernovae (both stars) if mass changes are responsible for a supernova
             (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_SN);                                         // print (log) detailed output
             if (HasOneOf({ STELLAR_TYPE::NEUTRON_STAR })) {
                 (void)PrintPulsarEvolutionParameters(BSE_PULSAR_RECORD_TYPE::POST_SN);                                  // print (log) pulsar evolution parameters 
             }
+            if (m_ActiveCircumbinaryDisk.active &&                                                                       // a live CBD survives non-disrupting bound events such as AIC
+                (CircumbinaryDisk::SupernovaEventsDisruptDisk(supernovaEvents) || IsUnbound())) {
+                FinaliseActiveCircumbinaryDisk();                                                                       // finalise and log the truncated CBD
+            }
         }
 
-        CalculateEnergyAndAngularMomentum();                                                                            // perform energy and angular momentum calculations
-        ProcessTides(p_Dt);                                                                                             // process tides if required
-        // assign new values to "previous" values, for following timestep
-        m_EccentricityPrev  = m_Eccentricity;
-        m_SemiMajorAxisPrev = m_SemiMajorAxis;
+        if (!m_RestartTimestepAfterImmediateEvent) {                                                                  // if an immediate event ended the timestep, do not process tides/spin with the old timestep
+            CalculateEnergyAndAngularMomentum();                                                                        // perform energy and angular momentum calculations
+            ProcessTides(p_Dt);                                                                                         // process tides if required
+            // assign new values to "previous" values, for following timestep
+            m_EccentricityPrev  = m_Eccentricity;
+            m_SemiMajorAxisPrev = m_SemiMajorAxis;
 
-        m_Star1->UpdateMagneticFieldAndSpin(m_CEDetails.CEEnow, m_Dt * MYR_TO_YEAR * SECONDS_IN_YEAR, EPSILON_PULSAR);  // update pulsar parameters for star1
-        m_Star2->UpdateMagneticFieldAndSpin(m_CEDetails.CEEnow, m_Dt * MYR_TO_YEAR * SECONDS_IN_YEAR, EPSILON_PULSAR);  // update pulsar parameters for star2
+            m_Star1->UpdateMagneticFieldAndSpin(m_CEDetails.CEEnow, m_Dt * MYR_TO_YEAR * SECONDS_IN_YEAR, EPSILON_PULSAR);  // update pulsar parameters for star1
+            m_Star2->UpdateMagneticFieldAndSpin(m_CEDetails.CEEnow, m_Dt * MYR_TO_YEAR * SECONDS_IN_YEAR, EPSILON_PULSAR);  // update pulsar parameters for star2
+        }
     }
 }
 
@@ -3516,6 +4122,10 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                 else if (IsUnbound()) {                                                                                                 // binary is unbound?
                     m_Flags.mergesInHubbleTime = false;                                                                                 // yes - won't merge in a Hubble time
 
+                    if (m_ActiveCircumbinaryDisk.active) {                                                                              // unbound binaries cannot retain an active CBD
+                        FinaliseActiveCircumbinaryDisk();                                                                               // finalise and log the truncated CBD
+                    }
+
                     if (IsDCO()) {                                                                                                      // DCO (has two COs)?
                         if (m_DCOFormationTime == DEFAULT_INITIAL_DOUBLE_VALUE) {                                                       // DCO not yet evaluated
                             m_DCOFormationTime = m_Time;                                                                                // set the DCO formation time
@@ -3533,7 +4143,10 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                         (void)PrintPulsarEvolutionParameters(BSE_PULSAR_RECORD_TYPE::POST_BINARY_TIMESTEP);                                 // print (log) pulsar evolution parameters 
                     }
                         
-                    if (IsDCO() && !IsUnbound()) {                                                                                      // bound double compact object?
+                    // DCO formation is not, by itself, a CBD-disrupting event.  A bound DCO produced by a
+                    // non-disrupting event (currently AIC) keeps the same disk, so defer DCO coalescence
+                    // bookkeeping and the usual DCO stopping condition until the CBD has drained.
+                    if (IsDCO() && !IsUnbound() && !m_ActiveCircumbinaryDisk.active) {                                                   // bound DCO with no active CBD?
                         if (m_DCOFormationTime == DEFAULT_INITIAL_DOUBLE_VALUE) {                                                       // DCO not yet evaluated -- to ensure that the coalescence is only resolved once
                             ResolveCoalescence();                                                                                       // yes - resolve coalescence
                             m_DCOFormationTime = m_Time;                                                                                // set the DCO formation time
@@ -3549,13 +4162,18 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                     if (evolutionStatus == EVOLUTION_STATUS::CONTINUE) {                                                                // continue evolution?
                                                                                                                                         // yes
                         // check for other reasons to stop evolution
-                        if (IsDCO() && m_Time > (m_DCOFormationTime + m_TimeToCoalescence) && !IsUnbound()) {                           // evolution time exceeds DCO merger time?
+                        if (IsDCO() &&
+                            !m_ActiveCircumbinaryDisk.active &&
+                            m_DCOFormationTime != DEFAULT_INITIAL_DOUBLE_VALUE &&
+                            m_Time > (m_DCOFormationTime + m_TimeToCoalescence) &&
+                            !IsUnbound()) {                                                                                            // evolution time exceeds DCO merger time?
                             evolutionStatus = EVOLUTION_STATUS::DCO_MERGER_TIME;                                                        // yes - stop evolution
                         }
                         else if (m_Time > OPTIONS->MaxEvolutionTime()) {                                                                // evolution time exceeds maximum?
                             evolutionStatus = EVOLUTION_STATUS::TIMES_UP;                                                               // yes - stop evolution
                         }
-                        else if (!OPTIONS->EvolveDoubleWhiteDwarfs() && IsWDandWD()) {                                                  // double WD and their evolution is not enabled?
+                        else if (!m_ActiveCircumbinaryDisk.active &&                                                               // allow a live finite-duration CBD to drain before stopping
+                                 !OPTIONS->EvolveDoubleWhiteDwarfs() && IsWDandWD()) {                                                  // double WD and their evolution is not enabled?
                             evolutionStatus = EVOLUTION_STATUS::WD_WD;                                                                  // yes - do not evolve double WD systems
                         }
                         else if ((HasOneOf({ STELLAR_TYPE::MASSLESS_REMNANT }) && !OPTIONS->EvolveMainSequenceMergers()) || 
@@ -3567,6 +4185,32 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                                 evolutionStatus = EVOLUTION_STATUS::MASSLESS_REMNANT;                                                   // yes - stop evolution
                             }
                         }
+                    }
+                }
+
+                if (evolutionStatus != EVOLUTION_STATUS::CONTINUE && m_ActiveCircumbinaryDisk.active) {                              // stop evolution with a truncated active CBD?
+                    FinaliseActiveCircumbinaryDisk();                                                                                   // yes - finalise and log the CBD before stopping
+                }
+
+                if (evolutionStatus == EVOLUTION_STATUS::CONTINUE && m_RestartTimestepAfterImmediateEvent) {                          // immediate event changed the binary: choose a fresh timestep before aging stars
+                    m_RestartTimestepAfterImmediateEvent = false;
+
+                    m_Star2->UpdatePreviousTimestepDuration();
+                    m_Star1->UpdatePreviousTimestepDuration();
+
+                    if (usingProvidedTimesteps) {
+                        if (stepNum >= timesteps.size()) {
+                            evolutionStatus = EVOLUTION_STATUS::TIMESTEPS_EXHAUSTED;
+                            SHOW_WARN(ERROR::TIMESTEPS_EXHAUSTED);
+                        }
+                        else {
+                            dt = timesteps[stepNum];
+                            stepNum++;
+                        }
+                    }
+                    else {
+                        if (OPTIONS->EmitGravitationalRadiation()) CalculateGravitationalRadiation();
+                        dt = ChooseTimestep();
                     }
                 }
 

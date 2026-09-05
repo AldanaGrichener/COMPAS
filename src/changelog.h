@@ -1705,7 +1705,25 @@
 //                                          - Corrected the M&M NS remnant mass prescription to never return a remnant mass larger than the CO core mass (see issue #1468)
 //  03.29.05  AG - May 26, 2026          - Defect repair:
 //                                       - Fix for generalized issue #1378: reinstate "false" fallback option for SN kick angle options (mistakenly changed to "true" in v03.00.00)
-//
+//  03.30.00  AG - June 05, 2026         - Enhancement:
+//                                          Added a post-common-envelope circumbinary disk (CBD) framework – disabled by default - based on the formalism 
+//                                          described in Grichener et al. (2026). The framework assumes that after common-envelope 
+//                                          evolution (CEE), a fraction of the pre-RLOF envelope mass and the binary's total angular 
+//                                          momentum (AM) might remain available for CBD formation.  If the available AM suffices to support a CBD of the retained mass, one is formed.
+//                                          The CBD is then accreted back by the binary, with the evolution based on spindler-c (*), modified to account for the Eddington accretion limit. 
+//                                          Non-accreted material is assumed to be lost in winds carrying the accretor's specific orbital angular momentum.
+//                                          CBD related output is written in a new file called BSE_Circumbinary_Disks. 
+//                                          Main user options: 
+//                                            --circumbinary-disk enables the CBD framework
+//                                            --circumbinary-disk-beta controls the likelihood of CBD formation
+//                                            --circumbinary-disk-envelope-mass-fraction-supplied controls the CBD mass
+//                                            --circumbinary-disk-eddington-mode controls the Eddington-limited accretion prescription
+//                                            --post-common-envelope-eccentricity-prescription controls the post-CEE eccentricity (non-zero values tend to be significantly increased by the CBD-binary interaction)
+//                                          See documentation for more information on the available options.
+//                                          (*) https://github.com/ruggero-valli/spindler-c, installation required to use the CBD module
+
+
+
 // Version string format is MM.mm.rr, where
 //
 // MM is the MAJOR release number: this should be incremented whenever major new functionality is introduced
@@ -1715,7 +1733,7 @@
 // if MM is incremented, set mm and rr to 00, even if defect repairs and minor enhancements were also made
 // if mm is incremented, set rr to 00, even if defect repairs were also made
 
-const std::string VERSION_STRING = "03.29.05";
+const std::string VERSION_STRING = "03.30.00";
 
 
 # endif // __changelog_h__
