@@ -18,6 +18,7 @@
 //#include <boost/math/special_functions/cbrt.hpp>    // For boost::math::cbrt.
 
 #include <tuple>                                    // for std::tuple and std::make_tuple.
+#include <string>                                   // for std::string.
 
 
 class Log;
@@ -38,6 +39,14 @@ public:
         m_Error                            = p_Star.m_Error;
 
         m_EvolutionStatus                  = p_Star.m_EvolutionStatus;
+
+        m_EvolutionaryChannel              = p_Star.m_EvolutionaryChannel;
+        m_EvolutionaryChannelLastToken     = p_Star.m_EvolutionaryChannelLastToken;
+        m_EvolutionaryChannelLastStateToken = p_Star.m_EvolutionaryChannelLastStateToken;
+        m_EvolutionaryChannelActiveMT      = p_Star.m_EvolutionaryChannelActiveMT;
+        m_EvolutionaryChannelLoggedUnbound = p_Star.m_EvolutionaryChannelLoggedUnbound;
+        m_EvolutionaryChannelProperties    = p_Star.m_EvolutionaryChannelProperties;
+        m_EvolutionaryChannelPropertyChannels = p_Star.m_EvolutionaryChannelPropertyChannels;
 
         m_RandomSeed                       = p_Star.m_RandomSeed;
 
@@ -177,6 +186,11 @@ public:
     double              CircumbinaryDiskSemiMajorAxisPost() const   { return m_CircumbinaryDiskDetails.semiMajorAxisPost; }
     double              CircumbinaryDiskEccentricityPre() const     { return m_CircumbinaryDiskDetails.eccentricityPre; }
     double              CircumbinaryDiskEccentricityPost() const    { return m_CircumbinaryDiskDetails.eccentricityPost; }
+    double              CircumbinaryDiskFormationTime() const      { return m_CircumbinaryDiskDetails.formationTime; }
+    double              CircumbinaryDiskMass1AtFormation() const   { return m_CircumbinaryDiskDetails.mass1AtFormation; }
+    double              CircumbinaryDiskMass2AtFormation() const   { return m_CircumbinaryDiskDetails.mass2AtFormation; }
+    STELLAR_TYPE        CircumbinaryDiskStellarType1AtFormation() const { return m_CircumbinaryDiskDetails.stellarType1AtFormation; }
+    STELLAR_TYPE        CircumbinaryDiskStellarType2AtFormation() const { return m_CircumbinaryDiskDetails.stellarType2AtFormation; }
     unsigned int        CommonEnvelopeEventCount() const            { return m_CEDetails.CEEcount; }
     bool                Unbound() const                             { return m_Unbound; }
     bool                DoubleCoreCE() const                        { return m_CEDetails.doubleCoreCE; }
@@ -189,6 +203,11 @@ public:
     double              EccentricityPreCEE() const                  { return m_CEDetails.preCEE.eccentricity; }
     ERROR               Error() const                               { return m_Error; }
     EVOLUTION_STATUS    EvolutionStatus() const                     { return m_EvolutionStatus; }
+    std::string         EvolutionaryChannel() const                  { return m_EvolutionaryChannel; }
+    std::string         EvolutionaryChannelCompact() const           { return CompactEvolutionaryChannel(m_EvolutionaryChannel); }
+    std::string         EvolutionaryChannelForLog() const;
+    std::string         EvolutionaryChannelCompactForLog() const;
+    std::string         EvolutionaryChannelPropertyForLog(const T_ANY_PROPERTY p_Property) const;
     double              FractionAccreted() const                    { return m_FractionAccreted; }
     bool                HasOnlyOneOf(STELLAR_TYPE_LIST p_List) const;
     bool                HasOneOf(STELLAR_TYPE_LIST p_List) const;
@@ -209,6 +228,7 @@ public:
                                                                                 ? HasTwoOf({STELLAR_TYPE::NEUTRON_STAR, STELLAR_TYPE::BLACK_HOLE})
                                                                                 : HasTwoOf({STELLAR_TYPE::NEUTRON_STAR, STELLAR_TYPE::BLACK_HOLE, STELLAR_TYPE::HELIUM_WHITE_DWARF, STELLAR_TYPE::CARBON_OXYGEN_WHITE_DWARF, STELLAR_TYPE::OXYGEN_NEON_WHITE_DWARF});
                                                                     }
+    bool                FormedDCO() const                           { return m_DCOFormationTime != DEFAULT_INITIAL_DOUBLE_VALUE || IsDCO(); }
     bool                IsNSandBH() const                           { return HasOneOf({STELLAR_TYPE::NEUTRON_STAR}) && HasOneOf({STELLAR_TYPE::BLACK_HOLE}); }
     bool                IsNSandNS() const                           { return HasTwoOf({STELLAR_TYPE::NEUTRON_STAR}); }
     bool                IsMRandNS() const                           { return HasOneOf({STELLAR_TYPE::NEUTRON_STAR}) && HasOneOf({STELLAR_TYPE::MASSLESS_REMNANT}); }
@@ -320,6 +340,14 @@ private:
 
     EVOLUTION_STATUS    m_EvolutionStatus;                                                  // Records the status of the evolution of the star
 
+    std::string         m_EvolutionaryChannel;                                               // Compact large-scale evolutionary history for this system
+    std::string         m_EvolutionaryChannelLastToken;                                      // Last token appended to the evolutionary channel
+    std::string         m_EvolutionaryChannelLastStateToken;                                 // Last stellar-type state token appended to the evolutionary channel
+    std::string         m_EvolutionaryChannelActiveMT;                                       // Directional MT token for the currently active stable MT episode
+    bool                m_EvolutionaryChannelLoggedUnbound;                                  // Whether the compact channel has already recorded the system becoming unbound
+    ANY_PROPERTY_VECTOR m_EvolutionaryChannelProperties;                                     // User-selected properties sampled at each evolutionary-channel token
+    STR_VECTOR          m_EvolutionaryChannelPropertyChannels;                               // Sampled property values aligned with m_EvolutionaryChannelProperties
+
     unsigned long int   m_RandomSeed;                                                       // Random seed for this binary
 
     BinaryCEDetailsT    m_CEDetails;                                                        // Common Event details
@@ -335,6 +363,11 @@ private:
         double semiMajorAxisPost = DEFAULT_INITIAL_DOUBLE_VALUE;                             // Semi-major axis after CBD evolution (Rsol)
         double eccentricityPre   = DEFAULT_INITIAL_DOUBLE_VALUE;                             // Eccentricity before CBD evolution
         double eccentricityPost  = DEFAULT_INITIAL_DOUBLE_VALUE;                             // Eccentricity after CBD evolution
+        double formationTime     = DEFAULT_INITIAL_DOUBLE_VALUE;                             // COMPAS time at CBD formation (Myr)
+        double mass1AtFormation  = DEFAULT_INITIAL_DOUBLE_VALUE;                             // Star 1 mass at CBD formation (Msol)
+        double mass2AtFormation  = DEFAULT_INITIAL_DOUBLE_VALUE;                             // Star 2 mass at CBD formation (Msol)
+        STELLAR_TYPE stellarType1AtFormation = STELLAR_TYPE::NONE;                           // Star 1 type at CBD formation
+        STELLAR_TYPE stellarType2AtFormation = STELLAR_TYPE::NONE;                           // Star 2 type at CBD formation
     }                   m_CircumbinaryDiskDetails{};
 
     // Persistent reservoir and delivery state for a TIMESTEPPED CBD that is
@@ -345,6 +378,9 @@ private:
         double remainingSuppliedMass     = 0.0;                                               // Supplied mass still to be processed by the CBD (Msol)
         double supplyRate                = 0.0;                                               // Uniform CBD supply rate (Msol yr^-1)
         double remainingDuration         = 0.0;                                               // CBD lifetime still to be evolved (yr)
+        double massSupplied              = 0.0;                                               // Cumulative mass actually supplied through the CBD (Msol)
+        double retainedMass1             = 0.0;                                               // Cumulative CBD-supplied mass retained by star 1 (Msol)
+        double retainedMass2             = 0.0;                                               // Cumulative CBD-supplied mass retained by star 2 (Msol)
     }                   m_ActiveCircumbinaryDisk{};
 
     bool                m_RestartTimestepAfterImmediateEvent;                                // Restart the timestep before aging stars after an instantaneous event
@@ -536,6 +572,18 @@ private:
 
     void    EvaluateSupernovae();
 
+    void        AppendEvolutionaryChannelEvent(const std::string& p_Token);
+    void        AppendEvolutionaryChannelPhysicalSnapshot();
+    void        AppendEvolutionaryChannelState();
+    void        AppendEvolutionaryChannelToken(const std::string& p_Token);
+    std::string CompactEvolutionaryChannel(const std::string& p_Channel) const;
+    std::string EvolutionaryChannelStateToken() const;
+    std::string EscapeEvolutionaryChannelForLog(const std::string& p_Channel) const;
+    void        InitialiseEvolutionaryChannelPropertyChannels();
+    bool        IsEvolutionaryChannelHardcodedLogProperty(const T_ANY_PROPERTY p_Property) const;
+    bool        IsEvolutionaryChannelStateToken(const std::string& p_Token) const;
+    void        ResetEvolutionaryChannelActiveMT();
+
     // CE/CBD helper functions.  The CBD physics lives in the CircumbinaryDisk* implementation files;
     // these helpers keep ResolveCommonEnvelopeEvent() focused on the CE flow
     // while handling COMPAS-specific state mutation, immediate-RLOF checks,
@@ -550,7 +598,7 @@ private:
                                                      const bool         p_EnvelopeFlag1,
                                                      const bool         p_EnvelopeFlag2);
     void    EvolveActiveCircumbinaryDiskOneTimestep(const double p_Dt);
-    void    FinaliseActiveCircumbinaryDisk();
+    void    FinaliseActiveCircumbinaryDisk(const bool p_Disrupted = false);
     void    SetPostCBDValues(const double p_SemiMajorAxisAU,
                              const double p_EccentricityAfterCBD,
                              const double p_Mass1AfterCBD,
@@ -613,6 +661,10 @@ private:
         return LOGGING->LogBSESystemParameters(this, p_RecordType);
     }
     
+    bool PrintEvolutionaryChannels(const BSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE p_RecordType = BSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE::DEFAULT) const {
+        return LOGGING->LogBSEEvolutionaryChannels(this, p_RecordType);
+    }
+
     bool PrintSystemSnapshotLog(const BSE_SYSTEM_SNAPSHOT_RECORD_TYPE p_RecordType = BSE_SYSTEM_SNAPSHOT_RECORD_TYPE::DEFAULT) const { 
         return LOGGING->LogBSESystemSnapshotLog(this, p_RecordType);
     }

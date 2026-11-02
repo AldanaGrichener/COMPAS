@@ -381,6 +381,7 @@ void Options::OptionValues::Initialise() {
     // Supernova remnant mass prescription options
     m_RemnantMassPrescription.type                                  = REMNANT_MASS_PRESCRIPTION::MULLERMANDEL;
     m_RemnantMassPrescription.typeString                            = REMNANT_MASS_PRESCRIPTION_LABEL.at(m_RemnantMassPrescription.type);
+    m_MullerMandelMu2b                                              = MULLERMANDEL_MU2B;
 
     m_FryerSupernovaEngine.type                                     = SN_ENGINE::DELAYED;
     m_FryerSupernovaEngine.typeString                               = SN_ENGINE_LABEL.at(m_FryerSupernovaEngine.type);
@@ -1641,6 +1642,11 @@ bool Options::AddOptions(OptionValues *p_Options, po::options_description *p_Opt
             ("Minimum sampled mass of secondary star, in Msol (default = " + std::to_string(p_Options->m_MinimumSampledSecondaryMass) + ")").c_str()
         )
         (
+            "muller-mandel-mu2b",
+            po::value<double>(&p_Options->m_MullerMandelMu2b)->default_value(p_Options->m_MullerMandelMu2b),
+            ("mu_2b coefficient for the 2 <= CO-core mass < 3 Msol branch of the 'MULLERMANDEL' NS remnant-mass prescription (default = " + std::to_string(p_Options->m_MullerMandelMu2b) + ")").c_str()
+        )
+        (
             "muller-mandel-kick-multiplier-BH",                                        
             po::value<double>(&p_Options->m_MullerMandelKickBH)->default_value(p_Options->m_MullerMandelKickBH),                                                                                  
             ("Scaling prefactor for BH kicks when using the 'MULLERMANDEL' kick magnitude distribution (default = " + std::to_string(p_Options->m_MullerMandelKickBH) + ")").c_str()
@@ -2757,6 +2763,8 @@ std::string Options::OptionValues::CheckAndSetOptions() {
 
         COMPLAIN_IF(m_MinimumSampledSecondaryMass < MINIMUM_INITIAL_MASS, "Minimum sampled secondary mass (--minimum-sampled-secondary-mass) must be >= " + std::to_string(MINIMUM_INITIAL_MASS) + " Msol");
         COMPLAIN_IF(m_MinimumSampledSecondaryMass > MAXIMUM_INITIAL_MASS, "Minimum sampled secondary mass (--minimum-sampled-secondary-mass) must be <= " + std::to_string(MAXIMUM_INITIAL_MASS) + " Msol");
+
+        COMPLAIN_IF(m_MullerMandelMu2b < 0.0, "Muller-Mandel mu_2b (--muller-mandel-mu2b) must be >= 0");
 
         if (m_NeutrinoMassLossAssumptionBH.type == NEUTRINO_MASS_LOSS_PRESCRIPTION::FIXED_MASS) {
             COMPLAIN_IF(m_NeutrinoMassLossValueBH < 0.0, "Neutrino mass loss value < 0");

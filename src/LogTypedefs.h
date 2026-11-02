@@ -478,6 +478,11 @@ enum class BINARY_PROPERTY: int {
     NONE,
     CIRCULARIZATION_TIMESCALE,
     CIRCUMBINARY_DISK_FORMED,
+    CIRCUMBINARY_DISK_FORMATION_TIME,
+    CIRCUMBINARY_DISK_MASS_1_AT_FORMATION,
+    CIRCUMBINARY_DISK_MASS_2_AT_FORMATION,
+    CIRCUMBINARY_DISK_STELLAR_TYPE_1_AT_FORMATION,
+    CIRCUMBINARY_DISK_STELLAR_TYPE_2_AT_FORMATION,
     CIRCUMBINARY_DISK_INITIAL_MASS,
     CIRCUMBINARY_DISK_MASS_RETAINED_1,
     CIRCUMBINARY_DISK_MASS_RETAINED_2,
@@ -499,6 +504,9 @@ enum class BINARY_PROPERTY: int {
     ECCENTRICITY_PRE_COMMON_ENVELOPE,
     ERROR,
     EVOL_STATUS,
+    EVOLUTIONARY_CHANNEL,
+    EVOLUTIONARY_CHANNEL_COMPACT,
+    FORMED_DCO,
     ID,
     IMMEDIATE_RLOF_POST_COMMON_ENVELOPE,
     MASS_1_POST_COMMON_ENVELOPE,
@@ -645,6 +653,11 @@ const COMPASUnorderedMap<BINARY_PROPERTY, std::string> BINARY_PROPERTY_LABEL = {
     { BINARY_PROPERTY::NONE,                                               "NONE" },
     { BINARY_PROPERTY::CIRCULARIZATION_TIMESCALE,                          "CIRCULARIZATION_TIMESCALE" },
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMED,                            "CIRCUMBINARY_DISK_FORMED" },
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMATION_TIME,                    "CIRCUMBINARY_DISK_FORMATION_TIME" },
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_1_AT_FORMATION,               "CIRCUMBINARY_DISK_MASS_1_AT_FORMATION" },
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_2_AT_FORMATION,               "CIRCUMBINARY_DISK_MASS_2_AT_FORMATION" },
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_1_AT_FORMATION,       "CIRCUMBINARY_DISK_STELLAR_TYPE_1_AT_FORMATION" },
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_2_AT_FORMATION,       "CIRCUMBINARY_DISK_STELLAR_TYPE_2_AT_FORMATION" },
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_INITIAL_MASS,                      "CIRCUMBINARY_DISK_INITIAL_MASS" },
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_1,                   "CIRCUMBINARY_DISK_MASS_RETAINED_1" },
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_2,                   "CIRCUMBINARY_DISK_MASS_RETAINED_2" },
@@ -666,6 +679,9 @@ const COMPASUnorderedMap<BINARY_PROPERTY, std::string> BINARY_PROPERTY_LABEL = {
     { BINARY_PROPERTY::ECCENTRICITY_PRE_COMMON_ENVELOPE,                   "ECCENTRICITY_PRE_COMMON_ENVELOPE" },
     { BINARY_PROPERTY::ERROR,                                              "ERROR" },
     { BINARY_PROPERTY::EVOL_STATUS,                                        "EVOL_STATUS" },
+    { BINARY_PROPERTY::EVOLUTIONARY_CHANNEL,                              "EVOLUTIONARY_CHANNEL" },
+    { BINARY_PROPERTY::EVOLUTIONARY_CHANNEL_COMPACT,                      "EVOLUTIONARY_CHANNEL_COMPACT" },
+    { BINARY_PROPERTY::FORMED_DCO,                                        "FORMED_DCO" },
     { BINARY_PROPERTY::ID,                                                 "ID" },
     { BINARY_PROPERTY::IMMEDIATE_RLOF_POST_COMMON_ENVELOPE,                "IMMEDIATE_RLOF_POST_COMMON_ENVELOPE" },
     { BINARY_PROPERTY::MASS_1_POST_COMMON_ENVELOPE,                        "MASS_1_POST_COMMON_ENVELOPE" },
@@ -1512,6 +1528,11 @@ const std::map<ANY_STAR_PROPERTY, PROPERTY_DETAILS> ANY_STAR_PROPERTY_DETAIL = {
 const std::map<BINARY_PROPERTY, PROPERTY_DETAILS> BINARY_PROPERTY_DETAIL = {
     { BINARY_PROPERTY::CIRCULARIZATION_TIMESCALE,                           { TYPENAME::DOUBLE,           "Tau_Circ",                  "Myr",              24, 15}},
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMED,                             { TYPENAME::BOOL,             "CBD",                       "Event",             0, 0 }},
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMATION_TIME,                     { TYPENAME::DOUBLE,           "Time",                      "Myr",              24, 15}},
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_1_AT_FORMATION,                { TYPENAME::DOUBLE,           "Mass(1)",                   "Msol",             24, 15}},
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_2_AT_FORMATION,                { TYPENAME::DOUBLE,           "Mass(2)",                   "Msol",             24, 15}},
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_1_AT_FORMATION,        { TYPENAME::STELLAR_TYPE,     "Stellar_Type(1)",           "-",                 4, 1 }},
+    { BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_2_AT_FORMATION,        { TYPENAME::STELLAR_TYPE,     "Stellar_Type(2)",           "-",                 4, 1 }},
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_INITIAL_MASS,                       { TYPENAME::DOUBLE,           "Initial_CBD_Mass",          "Msol",             24, 15}},
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_1,                    { TYPENAME::DOUBLE,           "CBD_Mass_Retained(1)",      "Msol",             24, 15}},
     { BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_2,                    { TYPENAME::DOUBLE,           "CBD_Mass_Retained(2)",      "Msol",             24, 15}},
@@ -1532,6 +1553,9 @@ const std::map<BINARY_PROPERTY, PROPERTY_DETAILS> BINARY_PROPERTY_DETAIL = {
     { BINARY_PROPERTY::ECCENTRICITY_PRE_COMMON_ENVELOPE,                    { TYPENAME::DOUBLE,           "Eccentricity<CE",           "-",                24, 15}},
     { BINARY_PROPERTY::ERROR,                                               { TYPENAME::ERROR,            "Error",                     "-",                 4, 1 }},
     { BINARY_PROPERTY::EVOL_STATUS,                                         { TYPENAME::EVOLUTION_STATUS, "Evolution_Status",          "-",                 4, 1 }},
+    { BINARY_PROPERTY::EVOLUTIONARY_CHANNEL,                              { TYPENAME::STRING,           "Evolutionary_Channel",      "-",                 0, 1 }},
+    { BINARY_PROPERTY::EVOLUTIONARY_CHANNEL_COMPACT,                      { TYPENAME::STRING,           "Evolutionary_Channel_Compact", "-",              0, 1 }},
+    { BINARY_PROPERTY::FORMED_DCO,                                        { TYPENAME::BOOL,             "Formed_DCO",                "State",             0, 0 }},
     { BINARY_PROPERTY::ID,                                                  { TYPENAME::OBJECT_ID,        "ID",                        "-",                12, 1 }},
     { BINARY_PROPERTY::IMMEDIATE_RLOF_POST_COMMON_ENVELOPE,                 { TYPENAME::BOOL,             "Immediate_RLOF>CE",         "Event",             0, 0 }},
     { BINARY_PROPERTY::MASS_1_POST_COMMON_ENVELOPE,                         { TYPENAME::DOUBLE,           "Mass(1)>CE",                "Msol",             24, 15}},
@@ -1931,6 +1955,7 @@ enum class LOGFILE: int {
     BSE_CIRCUMBINARY_DISKS,
     BSE_DETAILED_OUTPUT,
     BSE_DOUBLE_COMPACT_OBJECTS,
+    BSE_EVOLUTIONARY_CHANNELS,
     BSE_PULSAR_EVOLUTION,
     BSE_RLOF_PARAMETERS,
     BSE_SUPERNOVAE,
@@ -1939,6 +1964,7 @@ enum class LOGFILE: int {
     BSE_SYSTEM_PARAMETERS,
 
     SSE_DETAILED_OUTPUT,
+    SSE_EVOLUTIONARY_CHANNELS,
     SSE_PULSAR_EVOLUTION,
     SSE_SUPERNOVAE,
     SSE_SWITCH_LOG,
@@ -2005,6 +2031,14 @@ enum class SSE_PULSAR_RECORD_TYPE: unsigned int {                               
 
 enum class BSE_SN_RECORD_TYPE: unsigned int {                                                                       // BSE_SUPERNOVAE file record type
     DEFAULT = 1                                                                                                     // 1 - default BSE_SUPERNOVAE file record type
+};
+
+enum class BSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE: unsigned int {                                                    // BSE_EVOLUTIONARY_CHANNELS file record type
+    DEFAULT = 1                                                                                                     // 1 - default BSE_EVOLUTIONARY_CHANNELS file record type
+};
+
+enum class SSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE: unsigned int {                                                    // SSE_EVOLUTIONARY_CHANNELS file record type
+    DEFAULT = 1                                                                                                     // 1 - default SSE_EVOLUTIONARY_CHANNELS file record type
 };
 
 enum class SSE_SN_RECORD_TYPE: unsigned int {                                                                       // SSE_SUPERNOVAE file record type
@@ -2238,11 +2272,15 @@ const ANY_PROPERTY_VECTOR BSE_DETAILED_OUTPUT_REC = {
 // This file is event-based: one row is written for each CBD that forms.
 // INSTANTANEOUS mode writes the row after the full interaction.  TIMESTEPPED
 // mode writes the row when the active disk is exhausted or truncated by an
-// ordinary COMPAS termination/event boundary.
+// ordinary COMPAS termination/event boundary. Time, Mass(1/2), and
+// Stellar_Type(1/2) are cached at CBD formation rather than sampled at write time.
+// Initial_CBD_Mass is the disk
+// reservoir defined at formation; CBD_Mass_Supplied is the amount actually
+// processed before the row is written.
 //
 const ANY_PROPERTY_VECTOR BSE_CIRCUMBINARY_DISKS_REC = {
     BINARY_PROPERTY::RANDOM_SEED,
-    BINARY_PROPERTY::TIME,
+    BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMATION_TIME,
     BINARY_PROPERTY::CIRCUMBINARY_DISK_INITIAL_MASS,
     BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_SUPPLIED,
     BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_1,
@@ -2251,10 +2289,10 @@ const ANY_PROPERTY_VECTOR BSE_CIRCUMBINARY_DISKS_REC = {
     BINARY_PROPERTY::CIRCUMBINARY_DISK_SEMI_MAJOR_AXIS_POST,
     BINARY_PROPERTY::CIRCUMBINARY_DISK_ECCENTRICITY_PRE,
     BINARY_PROPERTY::CIRCUMBINARY_DISK_ECCENTRICITY_POST,
-    STAR_1_PROPERTY::MASS,
-    STAR_1_PROPERTY::STELLAR_TYPE,
-    STAR_2_PROPERTY::MASS,
-    STAR_2_PROPERTY::STELLAR_TYPE
+    BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_1_AT_FORMATION,
+    BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_1_AT_FORMATION,
+    BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_2_AT_FORMATION,
+    BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_2_AT_FORMATION
 };
 // BSE_DOUBLE_COMPACT_OBJECT_REC
 //
@@ -2273,6 +2311,21 @@ const ANY_PROPERTY_VECTOR BSE_DOUBLE_COMPACT_OBJECTS_REC = {
     BINARY_PROPERTY::MERGES_IN_HUBBLE_TIME, 
     STAR_1_PROPERTY::RECYCLED_NEUTRON_STAR,  
     STAR_2_PROPERTY::RECYCLED_NEUTRON_STAR
+};
+
+
+// BSE_EVOLUTIONARY_CHANNELS_REC
+//
+// Default record definition for the BSE Evolutionary Channels logfile
+//
+const ANY_PROPERTY_VECTOR BSE_EVOLUTIONARY_CHANNELS_REC = {
+    BINARY_PROPERTY::TIME,
+    STAR_1_PROPERTY::MASS,
+    STAR_2_PROPERTY::MASS,
+    STAR_1_PROPERTY::RADIUS,
+    STAR_2_PROPERTY::RADIUS,
+    BINARY_PROPERTY::SEMI_MAJOR_AXIS_RSOL,
+    BINARY_PROPERTY::ECCENTRICITY
 };
 
 
@@ -2549,6 +2602,16 @@ const ANY_PROPERTY_VECTOR BSE_SYSTEM_SNAPSHOT_LOG_REC = {
 
 // SSE output record definitions
 
+// SSE_EVOLUTIONARY_CHANNELS_REC
+//
+// Default record definition for the SSE Evolutionary Channels logfile.
+// Hard-coded channel/status fields are always emitted; ordinary properties
+// listed here are sampled at each evolutionary-channel marker.
+//
+const ANY_PROPERTY_VECTOR SSE_EVOLUTIONARY_CHANNELS_REC = {
+};
+
+
 // SSE_DETAILED_OUTPUT_REC
 //
 // Default record definition for the SSE Detailed Output logfile
@@ -2703,6 +2766,7 @@ const std::map<LOGFILE, LOGFILE_DESCRIPTOR_T> LOGFILE_DESCRIPTOR = {
     { LOGFILE::BSE_CIRCUMBINARY_DISKS,      { "BSE_Circumbinary_Disks",     BSE_CIRCUMBINARY_DISKS_REC,     "BSE_CBD",          "BSE_CBD_REC",          LOGFILE_CLASS::BINARY }},
     { LOGFILE::BSE_DETAILED_OUTPUT,        { "BSE_Detailed_Output",        BSE_DETAILED_OUTPUT_REC,        "BSE_DETAILED",     "BSE_DETAILED_REC",     LOGFILE_CLASS::BINARY }},
     { LOGFILE::BSE_DOUBLE_COMPACT_OBJECTS, { "BSE_Double_Compact_Objects", BSE_DOUBLE_COMPACT_OBJECTS_REC, "BSE_DCO",          "BSE_DCO_REC",          LOGFILE_CLASS::BINARY }},
+    { LOGFILE::BSE_EVOLUTIONARY_CHANNELS,{ "BSE_Evolutionary_Channels",BSE_EVOLUTIONARY_CHANNELS_REC,"BSE_EVOLUTIONARY_CHANNELS","BSE_EVOLUTIONARY_CHANNELS_REC",LOGFILE_CLASS::BINARY }},
     { LOGFILE::BSE_PULSAR_EVOLUTION,       { "BSE_Pulsar_Evolution",       BSE_PULSAR_EVOLUTION_REC,       "BSE_PULSARS",      "BSE_PULSARS_REC",      LOGFILE_CLASS::BINARY }},
     { LOGFILE::BSE_RLOF_PARAMETERS,        { "BSE_RLOF",                   BSE_RLOF_PARAMETERS_REC,        "BSE_RLOF",         "BSE_RLOF_REC",         LOGFILE_CLASS::BINARY }},
     { LOGFILE::BSE_SUPERNOVAE,             { "BSE_Supernovae",             BSE_SUPERNOVAE_REC,             "BSE_SNE",          "BSE_SNE_REC",          LOGFILE_CLASS::BINARY }},
@@ -2711,6 +2775,7 @@ const std::map<LOGFILE, LOGFILE_DESCRIPTOR_T> LOGFILE_DESCRIPTOR = {
     { LOGFILE::BSE_SYSTEM_SNAPSHOT_LOG,    { "BSE_System_Snapshot_Log",    BSE_SYSTEM_SNAPSHOT_LOG_REC,    "BSE_SYS_SNAPSHOT", "BSE_SYS_SNAPSHOT_REC", LOGFILE_CLASS::BINARY }},
 
     { LOGFILE::SSE_DETAILED_OUTPUT,        { "SSE_Detailed_Output",        SSE_DETAILED_OUTPUT_REC,        "SSE_DETAILED",     "SSE_DETAILED_REC",     LOGFILE_CLASS::STELLAR }},
+    { LOGFILE::SSE_EVOLUTIONARY_CHANNELS,  { "SSE_Evolutionary_Channels",  SSE_EVOLUTIONARY_CHANNELS_REC,  "SSE_EVOLUTIONARY_CHANNELS", "SSE_EVOLUTIONARY_CHANNELS_REC", LOGFILE_CLASS::STELLAR }},
     { LOGFILE::SSE_PULSAR_EVOLUTION,       { "SSE_Pulsar_Evolution",       SSE_PULSAR_EVOLUTION_REC,       "SSE_PULSARS",      "SSE_PULSARS_REC",      LOGFILE_CLASS::STELLAR }},
     { LOGFILE::SSE_SUPERNOVAE,             { "SSE_Supernovae",             SSE_SUPERNOVAE_REC,             "SSE_SNE",          "SSE_SNE_REC",          LOGFILE_CLASS::STELLAR }},
     { LOGFILE::SSE_SWITCH_LOG,             { "SSE_Switch_Log",             SSE_SWITCH_LOG_REC,             "SSE_SWITCH_LOG",   "SSE_SWITCH_REC",       LOGFILE_CLASS::STELLAR }},

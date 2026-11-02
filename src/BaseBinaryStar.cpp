@@ -2,6 +2,7 @@
 #include "CircumbinaryDisk.h"
 #include <fenv.h>
 #include <algorithm>
+#include <sstream>
 
 #include "vector3d.h"
 
@@ -111,12 +112,6 @@ BaseBinaryStar::BaseBinaryStar(const unsigned long int p_Seed, const long int p_
             mass2 = mass1 * q;                                                                                                          // calculate mass2 using mass ratio                                                                     
         }
 
-        double metallicity = !OPTIONS->OptionDefaulted("metallicity")                                                                   // user specified metallicity?
-                                ? OPTIONS->Metallicity()                                                                                // yes, use it
-                                : utils::SampleMetallicity(OPTIONS->MetallicityDistribution(),                                          // no, sample it
-                                                           OPTIONS->MetallicityDistributionMax(), 
-                                                           OPTIONS->MetallicityDistributionMin());
-
         if (!OPTIONS->OptionDefaulted("semi-major-axis")) {                                                                             // user specified semi-major axis?
             m_SemiMajorAxis = OPTIONS->SemiMajorAxis();                                                                                 // yes, use it
         }
@@ -154,6 +149,12 @@ BaseBinaryStar::BaseBinaryStar(const unsigned long int p_Seed, const long int p_
                             : utils::SampleEccentricity(OPTIONS->EccentricityDistribution(),                                            // no, sample it
                                                         OPTIONS->EccentricityDistributionMax(), 
                                                         OPTIONS->EccentricityDistributionMin());
+
+        double metallicity = !OPTIONS->OptionDefaulted("metallicity")                                                                   // user specified metallicity?
+                                ? OPTIONS->Metallicity()                                                                                // yes, use it
+                                : utils::SampleMetallicity(OPTIONS->MetallicityDistribution(),                                          // no, sample it
+                                                           OPTIONS->MetallicityDistributionMax(),
+                                                           OPTIONS->MetallicityDistributionMin());
 
         // binary star contains two instances of star to hold masses, radii and luminosities.
         // star 1 initially more massive
@@ -252,6 +253,12 @@ void BaseBinaryStar::SetInitialValues(const unsigned long int p_Seed, const long
     m_Id                = p_Id;
 
     m_EvolutionStatus   = EVOLUTION_STATUS::CONTINUE;
+
+    m_EvolutionaryChannel.clear();
+    m_EvolutionaryChannelLastToken.clear();
+    m_EvolutionaryChannelLastStateToken.clear();
+    m_EvolutionaryChannelActiveMT.clear();
+    m_EvolutionaryChannelLoggedUnbound = false;
 
     if (OPTIONS->PopulationDataPrinting()) {                                                                                            // user wants to see details of binary?
         SAY("Using supplied random seed " << m_RandomSeed << " for Binary Star id = " << m_ObjectId);                                   // yes - show them
@@ -492,6 +499,213 @@ void BaseBinaryStar::SetRemainingValues() {
 
     m_Supernova                                      = nullptr;
     m_Companion                                      = nullptr;
+
+    m_EvolutionaryChannel.clear();
+    m_EvolutionaryChannelLastToken.clear();
+    m_EvolutionaryChannelLastStateToken.clear();
+    m_EvolutionaryChannelActiveMT.clear();
+    m_EvolutionaryChannelLoggedUnbound = false;
+    InitialiseEvolutionaryChannelPropertyChannels();
+    AppendEvolutionaryChannelState();
+}
+
+
+/*
+ * Append token to compact large-scale evolutionary channel
+ */
+void BaseBinaryStar::AppendEvolutionaryChannelToken(const std::string& p_Token) {
+
+    if (p_Token.empty()) return;
+
+    // A stellar merger remains terminal for the compact channel.  UNBOUND is
+    // not terminal because COMPAS can continue evolving unbound systems.
+    if (m_EvolutionaryChannelLastToken == "MERGER") return;
+
+    // Record the physical transition to an unbound binary only once, but allow
+    // later stellar-type evolution and final-outcome tokens to follow it.
+    if (p_Token == "UNBOUND") {
+        if (m_EvolutionaryChannelLoggedUnbound) return;
+        m_EvolutionaryChannelLoggedUnbound = true;
+    }
+
+    if (p_Token == m_EvolutionaryChannelLastToken) return;
+
+    if (!m_EvolutionaryChannel.empty()) m_EvolutionaryChannel += "-->";
+
+    m_EvolutionaryChannel += p_Token;
+    m_EvolutionaryChannelLastToken = p_Token;
+    AppendEvolutionaryChannelPhysicalSnapshot();
+}
+
+
+/*
+ * Properties hard-coded into BSE_Evolutionary_Channels should not also be
+ * sampled as user-configurable evolutionary strings.
+ */
+bool BaseBinaryStar::IsEvolutionaryChannelHardcodedLogProperty(const T_ANY_PROPERTY p_Property) const {
+
+    return EvolutionaryChannelUtils::IsBSEHardcodedProperty(p_Property);
+}
+
+
+/*
+ * Initialise the user-configurable property channels from the BSE_Evolutionary_Channels
+ * logfile definition.  The logfile definition lists ordinary COMPAS properties; in this
+ * file they are sampled at every evolutionary-channel token and written as *_Channel
+ * evolutionary strings.
+ */
+void BaseBinaryStar::InitialiseEvolutionaryChannelPropertyChannels() {
+
+    m_EvolutionaryChannelProperties.clear();
+    m_EvolutionaryChannelPropertyChannels.clear();
+
+    ANY_PROPERTY_VECTOR properties = LOGGING->BSEEvolutionaryChannelProperties();
+
+    for (const auto& property : properties) {
+        if (IsEvolutionaryChannelHardcodedLogProperty(property)) continue;
+        if (std::find(m_EvolutionaryChannelProperties.begin(), m_EvolutionaryChannelProperties.end(), property) != m_EvolutionaryChannelProperties.end()) continue;
+
+        m_EvolutionaryChannelProperties.push_back(property);
+        m_EvolutionaryChannelPropertyChannels.push_back("");
+    }
+}
+
+/*
+ * Append current physical parameters to the physical-parameter evolutionary
+ * channels.  One snapshot is appended for each evolutionary-channel token,
+ * plus one additional final snapshot immediately before output.
+ */
+void BaseBinaryStar::AppendEvolutionaryChannelPhysicalSnapshot() {
+
+    for (size_t idx = 0; idx < m_EvolutionaryChannelProperties.size(); idx++) {
+        EvolutionaryChannelUtils::AppendDelimitedValue(
+            m_EvolutionaryChannelPropertyChannels[idx],
+            EvolutionaryChannelUtils::FormatPropertyValue(PropertyValue(m_EvolutionaryChannelProperties[idx]))
+        );
+    }
+}
+
+
+/*
+ * Construct compact stellar-type state token: (k1,k2)
+ */
+std::string BaseBinaryStar::EvolutionaryChannelStateToken() const {
+
+    std::ostringstream state;
+    state << "(" << static_cast<int>(m_Star1->StellarType()) << "," << static_cast<int>(m_Star2->StellarType()) << ")";
+    return state.str();
+}
+
+
+/*
+ * Append current stellar-type state to compact large-scale evolutionary channel
+ */
+void BaseBinaryStar::AppendEvolutionaryChannelState() {
+
+    if (!m_Star1 || !m_Star2) return;
+
+    const std::string stateToken = EvolutionaryChannelStateToken();
+
+    // Do not re-log the same stellar-type state merely because an intervening
+    // non-state event token was appended.  For example, after
+    // SN1-->(13,1)-->UNBOUND, the post-timestep bookkeeping should not append
+    // another unchanged (13,1).  Later genuine stellar-type evolution, e.g.
+    // (13,1)-->(13,2), is still logged.
+    if (stateToken == m_EvolutionaryChannelLastStateToken) return;
+
+    const std::string previousLastToken = m_EvolutionaryChannelLastToken;
+    AppendEvolutionaryChannelToken(stateToken);
+
+    // AppendEvolutionaryChannelToken() can be suppressed by terminal MERGER.
+    // Only advance the state cache if the state was actually appended.
+    if (m_EvolutionaryChannelLastToken != previousLastToken && m_EvolutionaryChannelLastToken == stateToken) {
+        m_EvolutionaryChannelLastStateToken = stateToken;
+    }
+}
+
+
+/*
+ * Append non-state event to compact large-scale evolutionary channel
+ */
+void BaseBinaryStar::AppendEvolutionaryChannelEvent(const std::string& p_Token) {
+
+    AppendEvolutionaryChannelToken(p_Token);
+}
+
+
+/*
+ * Reset active stable-MT episode tracking for the compact channel
+ */
+void BaseBinaryStar::ResetEvolutionaryChannelActiveMT() {
+
+    m_EvolutionaryChannelActiveMT.clear();
+}
+
+
+/*
+ * Return true if token is a stellar-type state token of the form (...).
+ */
+bool BaseBinaryStar::IsEvolutionaryChannelStateToken(const std::string& p_Token) const {
+
+    return p_Token.size() >= 2 && p_Token.front() == '(' && p_Token.back() == ')';
+}
+
+
+/*
+ * Compress an evolutionary channel by replacing maximal runs of consecutive
+ * stellar-type state tokens with their endpoints.  Event tokens act as
+ * barriers and are preserved exactly.
+ */
+std::string BaseBinaryStar::CompactEvolutionaryChannel(const std::string& p_Channel) const {
+
+    return EvolutionaryChannelUtils::CompactChannel(
+        p_Channel,
+        [this](const std::string& token) { return IsEvolutionaryChannelStateToken(token); }
+    );
+}
+
+
+/*
+ * Escape evolutionary channel string for logging.  CSV needs explicit quoting
+ * because state tokens contain commas, e.g. (1,1).
+ */
+std::string BaseBinaryStar::EscapeEvolutionaryChannelForLog(const std::string& p_Channel) const {
+
+    return OPTIONS->LogfileType() == LOGFILETYPE::CSV ? EvolutionaryChannelUtils::EscapeForCSV(p_Channel) : p_Channel;
+}
+
+
+/*
+ * Return evolutionary channel string for logging.
+ */
+std::string BaseBinaryStar::EvolutionaryChannelForLog() const {
+
+    return EscapeEvolutionaryChannelForLog(m_EvolutionaryChannel);
+}
+
+
+/*
+ * Return compacted evolutionary channel string for logging.
+ */
+std::string BaseBinaryStar::EvolutionaryChannelCompactForLog() const {
+
+    return EscapeEvolutionaryChannelForLog(CompactEvolutionaryChannel(m_EvolutionaryChannel));
+}
+
+
+
+
+
+
+
+
+std::string BaseBinaryStar::EvolutionaryChannelPropertyForLog(const T_ANY_PROPERTY p_Property) const {
+
+    for (size_t idx = 0; idx < m_EvolutionaryChannelProperties.size(); idx++) {
+        if (m_EvolutionaryChannelProperties[idx] == p_Property) return m_EvolutionaryChannelPropertyChannels[idx];
+    }
+
+    return "";
 }
 
 
@@ -532,6 +746,11 @@ COMPAS_VARIABLE BaseBinaryStar::BinaryPropertyValue(const T_ANY_PROPERTY p_Prope
 
         case BINARY_PROPERTY::CIRCULARIZATION_TIMESCALE:                            value = CircularizationTimescale();                                         break;
         case BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMED:                               value = CircumbinaryDiskFormed();                                         break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_FORMATION_TIME:                       value = CircumbinaryDiskFormationTime();                                   break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_1_AT_FORMATION:                   value = CircumbinaryDiskMass1AtFormation();                                break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_2_AT_FORMATION:                   value = CircumbinaryDiskMass2AtFormation();                                break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_1_AT_FORMATION:           value = CircumbinaryDiskStellarType1AtFormation();                         break;
+        case BINARY_PROPERTY::CIRCUMBINARY_DISK_STELLAR_TYPE_2_AT_FORMATION:           value = CircumbinaryDiskStellarType2AtFormation();                         break;
         case BINARY_PROPERTY::CIRCUMBINARY_DISK_INITIAL_MASS:                          value = CircumbinaryDiskInitialMass();                                    break;
         case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_1:                      value = CircumbinaryDiskMassRetained1();                                  break;
         case BINARY_PROPERTY::CIRCUMBINARY_DISK_MASS_RETAINED_2:                      value = CircumbinaryDiskMassRetained2();                                  break;
@@ -553,6 +772,9 @@ COMPAS_VARIABLE BaseBinaryStar::BinaryPropertyValue(const T_ANY_PROPERTY p_Prope
         case BINARY_PROPERTY::ECCENTRICITY_PRE_COMMON_ENVELOPE:                     value = EccentricityPreCEE();                                               break;
         case BINARY_PROPERTY::ERROR:                                                value = Error();                                                            break;
         case BINARY_PROPERTY::EVOL_STATUS:                                          value = EvolutionStatus();                                                  break;
+        case BINARY_PROPERTY::EVOLUTIONARY_CHANNEL:                                 value = EvolutionaryChannelForLog();                                       break;
+        case BINARY_PROPERTY::EVOLUTIONARY_CHANNEL_COMPACT:                         value = EvolutionaryChannelCompactForLog();                                break;
+        case BINARY_PROPERTY::FORMED_DCO:                                           value = FormedDCO();                                                       break;
         case BINARY_PROPERTY::ID:                                                   value = ObjectId();                                                         break;
         case BINARY_PROPERTY::IMMEDIATE_RLOF_POST_COMMON_ENVELOPE:                  value = ImmediateRLOFPostCEE();                                             break;
         case BINARY_PROPERTY::MASS_1_POST_COMMON_ENVELOPE:                          value = Mass1PostCEE();                                                     break;
@@ -1255,6 +1477,9 @@ void BaseBinaryStar::ResolveSupernova() {
     double reducedMassPreSN = m_Supernova->SN_TotalMassAtCOFormation() * m_Companion->Mass() / totalMassPreSN;                  // reduced Mass preSN
     m_Supernova->SetOrbitalEnergyPreSN(CalculateOrbitalEnergy(reducedMassPreSN, totalMassPreSN, m_SemiMajorAxisPreSN));         // orbital energy preSN
 
+    ResetEvolutionaryChannelActiveMT();
+    AppendEvolutionaryChannelEvent(m_Supernova == m_Star1 ? "SN1" : "SN2");
+
     // define the natal kick vector (see above for precise definitions of the angles)
     double theta             = m_Supernova->SN_Theta();                                                                         // angle out of the binary plane
     double phi               = m_Supernova->SN_Phi();                                                                           // angle in the binary plane
@@ -1497,6 +1722,9 @@ void BaseBinaryStar::ResolveSupernova() {
     m_IPrime    = m_ThetaE;                                                                                                     // inclination angle between preSN and postSN orbital planes 
     m_CosIPrime = cos(m_IPrime);
 
+    AppendEvolutionaryChannelState();
+    if (IsUnbound() && !m_EvolutionaryChannelLoggedUnbound) AppendEvolutionaryChannelEvent("UNBOUND");
+
     (void)PrintSupernovaDetails();                                                                                              // log record to supernovae logfile
     m_Supernova->ClearCurrentSNEvent();
 
@@ -1684,6 +1912,13 @@ void BaseBinaryStar::ApplyCircumbinaryDiskAfterCommonEnvelope(const STELLAR_TYPE
     m_CircumbinaryDiskDetails.semiMajorAxisPost = semiMajorAxisPostCERsol;
     m_CircumbinaryDiskDetails.eccentricityPre = m_Eccentricity;
     m_CircumbinaryDiskDetails.eccentricityPost = m_Eccentricity;
+    m_CircumbinaryDiskDetails.formationTime = m_Time;
+    m_CircumbinaryDiskDetails.mass1AtFormation = m_Star1->Mass();
+    m_CircumbinaryDiskDetails.mass2AtFormation = m_Star2->Mass();
+    m_CircumbinaryDiskDetails.stellarType1AtFormation = m_Star1->StellarType();
+    m_CircumbinaryDiskDetails.stellarType2AtFormation = m_Star2->StellarType();
+
+    AppendEvolutionaryChannelEvent("CBD_START");
 
     if (OPTIONS->CircumbinaryDiskEvolutionMode() == CIRCUMBINARY_DISK_EVOLUTION_MODE::TIMESTEPPED) {
         // Finite-lifetime mode: store the reservoir and let future COMPAS
@@ -1694,6 +1929,9 @@ void BaseBinaryStar::ApplyCircumbinaryDiskAfterCommonEnvelope(const STELLAR_TYPE
         m_ActiveCircumbinaryDisk.remainingSuppliedMass = suppliedMassMsol;
         m_ActiveCircumbinaryDisk.supplyRate = suppliedMassMsol / circumbinaryDiskLifetime;
         m_ActiveCircumbinaryDisk.remainingDuration = circumbinaryDiskLifetime;
+        m_ActiveCircumbinaryDisk.massSupplied = 0.0;
+        m_ActiveCircumbinaryDisk.retainedMass1 = 0.0;
+        m_ActiveCircumbinaryDisk.retainedMass2 = 0.0;
         m_RestartTimestepAfterImmediateEvent = true;
         return;
     }
@@ -1833,6 +2071,8 @@ void BaseBinaryStar::ApplyCircumbinaryDiskAfterCommonEnvelope(const STELLAR_TYPE
     ApplyCircumbinaryDiskMassChange(m_Star1, finalMass1);
     ApplyCircumbinaryDiskMassChange(m_Star2, finalMass2);
 
+    AppendEvolutionaryChannelEvent("CBD_END");
+
     (void)PrintCircumbinaryDisk();
 
 }
@@ -1883,9 +2123,12 @@ void BaseBinaryStar::ApplyCircumbinaryDiskMassChange(BinaryConstituentStar *p_St
  * row should report the last state produced by CBD evolution, not the post-SN
  * orbit.
  *
- * void FinaliseActiveCircumbinaryDisk()
+ * void FinaliseActiveCircumbinaryDisk(const bool p_Disrupted)
+ *
+ * @param   [IN]    p_Disrupted    True when a physical binary-evolution event
+ *                                  prematurely terminates the active CBD
  */
-void BaseBinaryStar::FinaliseActiveCircumbinaryDisk() {
+void BaseBinaryStar::FinaliseActiveCircumbinaryDisk(const bool p_Disrupted) {
 
     const double totalSuppliedMass = std::max(m_ActiveCircumbinaryDisk.totalSuppliedMass, 0.0);
     const double completionTolerance = std::max(1.0e-12, 1.0e-10 * std::max(totalSuppliedMass, 1.0));
@@ -1908,11 +2151,27 @@ void BaseBinaryStar::FinaliseActiveCircumbinaryDisk() {
         // supplied mass exactly matches the initial reservoir.
         m_ActiveCircumbinaryDisk.remainingSuppliedMass = 0.0;
         m_ActiveCircumbinaryDisk.remainingDuration     = 0.0;
+        m_ActiveCircumbinaryDisk.massSupplied          = totalSuppliedMass;
     }
 
-    m_CircumbinaryDiskDetails.massSupplied = completed
-        ? totalSuppliedMass
-        : std::max(totalSuppliedMass - m_ActiveCircumbinaryDisk.remainingSuppliedMass, 0.0);
+    // The active-disk accumulators are authoritative for TIMESTEPPED output.
+    // In particular, do not infer retained mass from the live stellar masses
+    // here: a SN, CE, merger, or other event may already have changed them.
+    m_CircumbinaryDiskDetails.massSupplied  = std::max(m_ActiveCircumbinaryDisk.massSupplied, 0.0);
+    m_CircumbinaryDiskDetails.massRetained1 = m_ActiveCircumbinaryDisk.retainedMass1;
+    m_CircumbinaryDiskDetails.massRetained2 = m_ActiveCircumbinaryDisk.retainedMass2;
+
+    if (completed) {
+        AppendEvolutionaryChannelEvent("CBD_END");
+    }
+    else if (p_Disrupted) {
+        // Disruption call sites place this marker directly adjacent to the
+        // physical event.  It normally follows the event; for MERGER it is
+        // deliberately written immediately before MERGER because MERGER is a
+        // terminal evolutionary-channel token.
+        AppendEvolutionaryChannelEvent("CBD_DISRUPTED");
+    }
+
     m_ActiveCircumbinaryDisk.active = false;
 
     (void)PrintCircumbinaryDisk();
@@ -1983,8 +2242,8 @@ void BaseBinaryStar::EvolveActiveCircumbinaryDiskOneTimestep(const double p_Dt) 
     const double finalMass1 = track.mass1Msol;
     const double finalMass2 = track.mass2Msol;
 
-    m_CircumbinaryDiskDetails.massRetained1 += finalMass1 - mass1BeforeCBD;
-    m_CircumbinaryDiskDetails.massRetained2 += finalMass2 - mass2BeforeCBD;
+    m_ActiveCircumbinaryDisk.retainedMass1 += finalMass1 - mass1BeforeCBD;
+    m_ActiveCircumbinaryDisk.retainedMass2 += finalMass2 - mass2BeforeCBD;
 
     m_SemiMajorAxis = m_SemiMajorAxis * track.semiMajorAxisFactor;
     m_Eccentricity  = track.eccentricity;
@@ -1994,14 +2253,17 @@ void BaseBinaryStar::EvolveActiveCircumbinaryDiskOneTimestep(const double p_Dt) 
 
     m_ActiveCircumbinaryDisk.remainingDuration = std::max(m_ActiveCircumbinaryDisk.remainingDuration - dtYears, 0.0);
     m_ActiveCircumbinaryDisk.remainingSuppliedMass = std::max(m_ActiveCircumbinaryDisk.remainingSuppliedMass - suppliedThisStep, 0.0);
+    m_ActiveCircumbinaryDisk.massSupplied += suppliedThisStep;
 
     const bool completedByMass = utils::Compare(m_ActiveCircumbinaryDisk.remainingSuppliedMass, 0.0, completionTolerance) <= 0;
     const bool completedByDuration = utils::Compare(m_ActiveCircumbinaryDisk.remainingDuration, 0.0) <= 0;
 
-    m_CircumbinaryDiskDetails.massSupplied      = std::max(
-        m_ActiveCircumbinaryDisk.totalSuppliedMass - m_ActiveCircumbinaryDisk.remainingSuppliedMass,
-        0.0
-    );
+    // Mirror the authoritative active-disk accumulators into the event details
+    // after every CBD increment.  If another event disrupts the disk before the
+    // next CBD step, these are exactly the values written to the CBD logfile.
+    m_CircumbinaryDiskDetails.massSupplied      = std::max(m_ActiveCircumbinaryDisk.massSupplied, 0.0);
+    m_CircumbinaryDiskDetails.massRetained1     = m_ActiveCircumbinaryDisk.retainedMass1;
+    m_CircumbinaryDiskDetails.massRetained2     = m_ActiveCircumbinaryDisk.retainedMass2;
     m_CircumbinaryDiskDetails.semiMajorAxisPost = m_SemiMajorAxis * AU_TO_RSOL;
     m_CircumbinaryDiskDetails.eccentricityPost  = m_Eccentricity;
 
@@ -2055,9 +2317,13 @@ double BaseBinaryStar::CalculatePostCommonEnvelopeEccentricity() const {
  */
 void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
     
+    ResetEvolutionaryChannelActiveMT();
+    AppendEvolutionaryChannelEvent("CEE");
+
     if (m_ActiveCircumbinaryDisk.active) {
         // A new common-envelope event interrupts the finite-duration CBD.
-        FinaliseActiveCircumbinaryDisk();
+        // Record the CEE first, then mark the active disk as disrupted.
+        FinaliseActiveCircumbinaryDisk(true);
     }
 
     double alphaCE = OPTIONS->CommonEnvelopeAlpha();                                                                    // CE efficiency parameter
@@ -2285,6 +2551,10 @@ void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
         m_Star2->SetPostCEEValues();                                                                                    // squirrel away post CEE stellar values for star 2
         SetPostCEEValues(m_SemiMajorAxis * AU_TO_RSOL, semiMajorAxisAfterStage1 * AU_TO_RSOL, m_Eccentricity, rRLdfin1Rsol, rRLdfin2Rsol); // squirrel away post CEE binary values (checks for post-CE RLOF, so should be done at end)
 
+        // Record the detached post-CE state before any post-CE CBD processing so
+        // CBD_START has the intended immediate post-CE/pre-CBD snapshot.
+        AppendEvolutionaryChannelState();
+
         const bool allowImmediateRLOFPostCE = OPTIONS->AllowImmediateRLOFpostCEToSurviveCommonEnvelope();
         if ((!m_RLOFDetails.immediateRLOFPostCEE || allowImmediateRLOFPostCE) && OPTIONS->CircumbinaryDisk()) {                // only evolve CBDs for CE survivors
             // The CBD framework is a post-CE process.  It is applied only after
@@ -2301,6 +2571,14 @@ void BaseBinaryStar::ResolveCommonEnvelopeEvent() {
 
     }
     
+    // Record any post-CEE stellar-type change even if the CEE ultimately
+    // leads to a merger.  MERGER remains terminal and is appended after the state.
+    AppendEvolutionaryChannelState();
+    if (m_Flags.stellarMerger) {
+        if (m_ActiveCircumbinaryDisk.active) FinaliseActiveCircumbinaryDisk(true);
+        AppendEvolutionaryChannelEvent("MERGER");
+    }
+
     (void)PrintCommonEnvelope();                                                                                        // print (log) common envelope details
     
 }
@@ -2318,6 +2596,9 @@ void BaseBinaryStar::ResolveMainSequenceMerger() {
 
     // sanity check for MS merger: do nothing if conditions for MS merger are not satisfied
     if (!(m_Star1->IsOneOf(MAIN_SEQUENCE) && m_Star2->IsOneOf(MAIN_SEQUENCE) && OPTIONS->EvolveMainSequenceMergers())) return;
+
+    ResetEvolutionaryChannelActiveMT();
+    AppendEvolutionaryChannelEvent("MERGER");
 
     // resolve MS merger
     
@@ -2354,6 +2635,7 @@ void BaseBinaryStar::ResolveMainSequenceMerger() {
     m_Star1->UpdateAfterMerger(finalMass, finalHydrogenMass);
     
     m_Star2->SwitchTo(STELLAR_TYPE::MASSLESS_REMNANT);
+    AppendEvolutionaryChannelState();
 }
 
 
@@ -2601,21 +2883,35 @@ void BaseBinaryStar::CalculateMassTransfer(const double p_Dt) {
     
     InitialiseMassTransfer();                                                                                                   // initialise - even if not using mass transfer (sets some flags we might need)
     
-    if (Unbound()) return;                                                                                                      // do nothing for unbound binaries
-    
-    if (!OPTIONS->UseMassTransfer()) return;                                                                                    // mass transfer not enabled - nothing to do
-    
-    if (!m_Star1->IsRLOF() && !m_Star2->IsRLOF()) return;                                                                       // neither star is overflowing its Roche Lobe - no mass transfer - nothing to do
-    
-    if (OPTIONS->CHEMode() != CHE_MODE::NONE && HasTwoOf({STELLAR_TYPE::CHEMICALLY_HOMOGENEOUS}) && HasStarsTouching()) {       // CHE enabled and both stars CH?
-        m_Flags.stellarMerger = true;
+    if (Unbound()) {                                                                                                       // do nothing for unbound binaries
+        ResetEvolutionaryChannelActiveMT();
         return;
     }
     
-    if (HasOneOf({STELLAR_TYPE::MASSLESS_REMNANT})) return;                                                                     // one of the stars is already a massless remnant, nothing to do
+    if (!OPTIONS->UseMassTransfer()) {                                                                                     // mass transfer not enabled - nothing to do
+        ResetEvolutionaryChannelActiveMT();
+        return;
+    }
+    
+    if (!m_Star1->IsRLOF() && !m_Star2->IsRLOF()) {                                                                        // neither star is overflowing its Roche Lobe - no mass transfer - nothing to do
+        ResetEvolutionaryChannelActiveMT();
+        return;
+    }
+    
+    if (OPTIONS->CHEMode() != CHE_MODE::NONE && HasTwoOf({STELLAR_TYPE::CHEMICALLY_HOMOGENEOUS}) && HasStarsTouching()) {       // CHE enabled and both stars CH?
+        m_Flags.stellarMerger = true;
+        ResetEvolutionaryChannelActiveMT();
+        return;
+    }
+    
+    if (HasOneOf({STELLAR_TYPE::MASSLESS_REMNANT})) {                                                                        // one of the stars is already a massless remnant, nothing to do
+        ResetEvolutionaryChannelActiveMT();
+        return;
+    }
     
     if (m_Star1->IsRLOF() && m_Star2->IsRLOF()) {                                                                               // both stars overflowing their Roche Lobe?
         m_CEDetails.CEEnow = true;                                                                                              // yes - common envelope event - no mass transfer
+        ResetEvolutionaryChannelActiveMT();
         return;                                                                                                                 // and return - nothing (else) to do
     }
     
@@ -2708,6 +3004,7 @@ void BaseBinaryStar::CalculateMassTransfer(const double p_Dt) {
     // Evaluate separately for stable / unstable MT
     if (isUnstable) {                                                                                                           // unstable Mass Transfer
          m_CEDetails.CEEnow = true;
+         ResetEvolutionaryChannelActiveMT();
     }
     else {                                                                                                                      // stable MT
             
@@ -2728,6 +3025,7 @@ void BaseBinaryStar::CalculateMassTransfer(const double p_Dt) {
                 // if donor cannot lose mass to fit inside Roche lobe, the only viable action is to enter CE phase -- but this probably should not happen...
                 SHOW_WARN(ERROR::UNEXPECTED_ROOT_FINDER_FAILURE);
                 m_CEDetails.CEEnow = true;                                                                                      // flag CE
+                ResetEvolutionaryChannelActiveMT();
             }
             else {                                                                                                              // have required mass loss
                 massDiffDonor = -massDiffDonor;                                                                                 // set mass difference
@@ -2740,12 +3038,23 @@ void BaseBinaryStar::CalculateMassTransfer(const double p_Dt) {
                                                                                                                                 // no
             m_MassTransferTrackerHistory = m_Donor == m_Star1 ? MT_TRACKING::STABLE_1_TO_2_SURV : MT_TRACKING::STABLE_2_TO_1_SURV; // record what happened - for later printing
 
+            const std::string mtToken = m_Donor == m_Star1 ? "MT1>2" : "MT2>1";
+
             if (m_ActiveCircumbinaryDisk.active && m_MassTransferTimescale == MT_TIMESCALE::THERMAL) {
                 // The CBD prescription is not coupled to the large discrete
                 // binary transformation represented by thermal-timescale stable
                 // MT.  Nuclear-timescale stable MT may continue alongside the
-                // active CBD.
-                FinaliseActiveCircumbinaryDisk();
+                // active CBD.  Record the MT direction first, then the fact that
+                // it disrupts the disk.  AppendEvolutionaryChannelEvent()
+                // suppresses an immediately repeated MT token automatically.
+                AppendEvolutionaryChannelEvent(mtToken);
+                m_EvolutionaryChannelActiveMT = mtToken;
+                FinaliseActiveCircumbinaryDisk(true);
+            }
+
+            if (m_EvolutionaryChannelActiveMT != mtToken) {
+                AppendEvolutionaryChannelEvent(mtToken);
+                m_EvolutionaryChannelActiveMT = mtToken;
             }
 
             double massGainAccretor  = -massDiffDonor * m_FractionAccreted;                                                     // set accretor mass gain to mass loss * conservativeness
@@ -3201,6 +3510,10 @@ void BaseBinaryStar::ResolveMassChanges() {
 
     if ((m_Star1->StellarType() != stellarType1) || (m_Star2->StellarType() != stellarType2)) {         // stellar type change?
         (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::STELLAR_TYPE_CHANGE_DURING_MASS_RESOLUTION); // yes - print (log) detailed output
+
+        // If the type change created a pending SN/AIC event, do not log the
+        // remnant state yet. ResolveSupernova() will log SN1/SN2 first.
+        if (!(m_Star1->IsSNevent() || m_Star2->IsSNevent())) AppendEvolutionaryChannelState();
     }
 }
 
@@ -3891,7 +4204,7 @@ void BaseBinaryStar::EvaluateBinary(const double p_Dt) {
         }
         if (m_ActiveCircumbinaryDisk.active &&                                                                           // a live CBD survives non-disrupting bound events such as AIC
             (CircumbinaryDisk::SupernovaEventsDisruptDisk(supernovaEvents) || IsUnbound())) {
-            FinaliseActiveCircumbinaryDisk();                                                                           // finalise and log the truncated CBD
+            FinaliseActiveCircumbinaryDisk(true);                                                                       // physical event already logged; mark and log the disrupted CBD
         }
     }
     else {
@@ -3921,7 +4234,7 @@ void BaseBinaryStar::EvaluateBinary(const double p_Dt) {
             }
             if (m_ActiveCircumbinaryDisk.active &&                                                                       // a live CBD survives non-disrupting bound events such as AIC
                 (CircumbinaryDisk::SupernovaEventsDisruptDisk(supernovaEvents) || IsUnbound())) {
-                FinaliseActiveCircumbinaryDisk();                                                                       // finalise and log the truncated CBD
+                FinaliseActiveCircumbinaryDisk(true);                                                                   // physical event already logged; mark and log the disrupted CBD
             }
         }
 
@@ -4009,6 +4322,10 @@ ERROR BaseBinaryStar::EvolveOneTimestep(const double p_Dt) {
         SHOW_ERROR(m_Error);                                                            // unspecified error
     }
 
+    // If aging created a pending SN/AIC event, do not log the remnant state
+    // yet. ResolveSupernova() will log SN1/SN2 first.
+    if (!(m_Star1->IsSNevent() || m_Star2->IsSNevent())) AppendEvolutionaryChannelState();
+
     return m_Error;
 }
 
@@ -4039,6 +4356,7 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
             else {
                 m_Flags.stellarMerger        = true;
                 m_Flags.stellarMergerAtBirth = true;
+                AppendEvolutionaryChannelEvent("MERGER");
                 evolutionStatus              = EVOLUTION_STATUS::STELLAR_MERGER_AT_BIRTH;                                               // binary components are touching - merger at birth
             }
         }
@@ -4099,6 +4417,7 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                 if (OPTIONS->RLOFPrinting()) StashRLOFProperties(MT_TIMING::PRE_MT);                                                    // stash RLOF properties immediately pre-Mass Transfer if required
 
                 EvaluateBinary(dt);                                                                                                     // evaluate the binary at this timestep
+                AppendEvolutionaryChannelState();
 
                 (void)PrintDetailedOutput(m_Id, BSE_DETAILED_RECORD_TYPE::POST_BINARY_TIMESTEP);                                        // print (log) detailed output
                 
@@ -4113,17 +4432,22 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                         // eventually, will want to implement a more careful prescription for the merger product,
                         // perhaps allowing further evolution of the merger product
                         (void)LogMergerToSwitchLog();                                                                                   // log merger
+                        if (m_ActiveCircumbinaryDisk.active) FinaliseActiveCircumbinaryDisk(true);
+                        AppendEvolutionaryChannelEvent("MERGER");
                         evolutionStatus = EVOLUTION_STATUS::STELLAR_MERGER;                                                             // stop evolution
                     }
                 }
                 else if (HasStarsTouching()) {                                                                                          // binary components touching? (should usually be avoided as MT or CE or merger should happen prior to this)
+                    if (m_ActiveCircumbinaryDisk.active) FinaliseActiveCircumbinaryDisk(true);
+                    AppendEvolutionaryChannelEvent("MERGER");
                     evolutionStatus = EVOLUTION_STATUS::STARS_TOUCHING;                                                                 // yes - stop evolution
                 }
                 else if (IsUnbound()) {                                                                                                 // binary is unbound?
+                    if (!m_EvolutionaryChannelLoggedUnbound) AppendEvolutionaryChannelEvent("UNBOUND");
                     m_Flags.mergesInHubbleTime = false;                                                                                 // yes - won't merge in a Hubble time
 
                     if (m_ActiveCircumbinaryDisk.active) {                                                                              // unbound binaries cannot retain an active CBD
-                        FinaliseActiveCircumbinaryDisk();                                                                               // finalise and log the truncated CBD
+                        FinaliseActiveCircumbinaryDisk(true);                                                                           // UNBOUND already logged; mark and log the disrupted CBD
                     }
 
                     if (IsDCO()) {                                                                                                      // DCO (has two COs)?
@@ -4167,6 +4491,7 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
                             m_DCOFormationTime != DEFAULT_INITIAL_DOUBLE_VALUE &&
                             m_Time > (m_DCOFormationTime + m_TimeToCoalescence) &&
                             !IsUnbound()) {                                                                                            // evolution time exceeds DCO merger time?
+                            AppendEvolutionaryChannelEvent("MERGER");
                             evolutionStatus = EVOLUTION_STATUS::DCO_MERGER_TIME;                                                        // yes - stop evolution
                         }
                         else if (m_Time > OPTIONS->MaxEvolutionTime()) {                                                                // evolution time exceeds maximum?
@@ -4351,7 +4676,10 @@ EVOLUTION_STATUS BaseBinaryStar::Evolve() {
 
     m_EvolutionStatus = evolutionStatus;
 
+    AppendEvolutionaryChannelPhysicalSnapshot();                                                                                         // append extra final snapshot: physical channels have one more entry than the evolutionary channel
+
     (void)PrintSystemParameters();                                                                                                      // print (log) binary system parameters
+    (void)PrintEvolutionaryChannels();                                                                                                  // print (log) compact large-scale evolutionary channel
 
     return evolutionStatus;
 }

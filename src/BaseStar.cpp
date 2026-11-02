@@ -7,6 +7,11 @@
 #include "vector3d.h"
 #include "BH.h"
 
+#include <algorithm>
+#include <cctype>
+#include <iomanip>
+#include <sstream>
+
 // boost includes
 #include <boost/math/distributions.hpp>
 
@@ -24,6 +29,12 @@ BaseStar::BaseStar() {
     m_StellarType        = STELLAR_TYPE::STAR;                                                      // stellar type - changes throughout life of star (through evolution to other phases)
 
     m_Error              = ERROR::NONE;                                                             // clear error flag
+
+    m_EvolutionaryChannel.clear();
+    m_EvolutionaryChannelLastToken.clear();
+    m_EvolutionaryChannelLastStateToken.clear();
+    m_EvolutionaryChannelProperties.clear();
+    m_EvolutionaryChannelPropertyChannels.clear();
 }
 
 
@@ -45,6 +56,12 @@ BaseStar::BaseStar(const unsigned long int p_RandomSeed,
     m_CHE                 = false;                                                                  // initially
 
     m_EvolutionStatus     = EVOLUTION_STATUS::CONTINUE;                                             // initially
+
+    m_EvolutionaryChannel.clear();
+    m_EvolutionaryChannelLastToken.clear();
+    m_EvolutionaryChannelLastStateToken.clear();
+    m_EvolutionaryChannelProperties.clear();
+    m_EvolutionaryChannelPropertyChannels.clear();
     
     // Initialise member variables from input parameters
     // (kick parameters initialised below - see m_SupernovaDetails)
@@ -212,6 +229,170 @@ BaseStar::BaseStar(const unsigned long int p_RandomSeed,
     // Mass Transfer Donor Type History
     m_MassTransferDonorHistory                 = ST_VECTOR();
 
+}
+
+
+/*
+ * Append token to coarse single-star evolutionary channel.
+ */
+void BaseStar::AppendEvolutionaryChannelToken(const std::string& p_Token) {
+
+    if (p_Token.empty()) return;
+    if (p_Token == m_EvolutionaryChannelLastToken) return;
+
+    if (m_EvolutionaryChannelProperties.empty() && m_EvolutionaryChannelPropertyChannels.empty()) {
+        InitialiseEvolutionaryChannelPropertyChannels();
+    }
+
+    if (!m_EvolutionaryChannel.empty()) m_EvolutionaryChannel += "-->";
+
+    m_EvolutionaryChannel += p_Token;
+    m_EvolutionaryChannelLastToken = p_Token;
+    AppendEvolutionaryChannelPhysicalSnapshot();
+}
+
+
+/*
+ * Properties hard-coded into SSE_Evolutionary_Channels should not also be
+ * sampled as user-configurable evolutionary strings.
+ */
+bool BaseStar::IsEvolutionaryChannelHardcodedLogProperty(const T_ANY_PROPERTY p_Property) const {
+
+    return EvolutionaryChannelUtils::IsSSEHardcodedProperty(p_Property);
+}
+
+
+/*
+ * Initialise the user-configurable property channels from the
+ * SSE_Evolutionary_Channels logfile definition.  The logfile definition lists
+ * ordinary COMPAS properties; in this file they are sampled at every
+ * evolutionary-channel token and written as *_Channel evolutionary strings.
+ */
+void BaseStar::InitialiseEvolutionaryChannelPropertyChannels() {
+
+    m_EvolutionaryChannelProperties.clear();
+    m_EvolutionaryChannelPropertyChannels.clear();
+
+    ANY_PROPERTY_VECTOR properties = LOGGING->SSEEvolutionaryChannelProperties();
+
+    for (const auto& property : properties) {
+        if (IsEvolutionaryChannelHardcodedLogProperty(property)) continue;
+        if (std::find(m_EvolutionaryChannelProperties.begin(), m_EvolutionaryChannelProperties.end(), property) != m_EvolutionaryChannelProperties.end()) continue;
+
+        m_EvolutionaryChannelProperties.push_back(property);
+        m_EvolutionaryChannelPropertyChannels.push_back("");
+    }
+}
+
+
+/*
+ * Append current physical parameters to the user-configurable property channels.
+ */
+void BaseStar::AppendEvolutionaryChannelPhysicalSnapshot() {
+
+    for (size_t idx = 0; idx < m_EvolutionaryChannelProperties.size(); idx++) {
+        EvolutionaryChannelUtils::AppendDelimitedValue(
+            m_EvolutionaryChannelPropertyChannels[idx],
+            EvolutionaryChannelUtils::FormatPropertyValue(PropertyValue(m_EvolutionaryChannelProperties[idx]))
+        );
+    }
+}
+
+
+/*
+ * Construct single-star stellar-type state token.
+ */
+std::string BaseStar::EvolutionaryChannelStateToken() const {
+
+    return std::to_string(static_cast<int>(StellarType()));
+}
+
+
+/*
+ * Append current stellar-type state to the coarse single-star evolutionary channel.
+ */
+void BaseStar::AppendEvolutionaryChannelState() {
+
+    const std::string stateToken = EvolutionaryChannelStateToken();
+
+    if (stateToken == m_EvolutionaryChannelLastStateToken) return;
+
+    const std::string previousLastToken = m_EvolutionaryChannelLastToken;
+    AppendEvolutionaryChannelToken(stateToken);
+
+    if (m_EvolutionaryChannelLastToken != previousLastToken && m_EvolutionaryChannelLastToken == stateToken) {
+        m_EvolutionaryChannelLastStateToken = stateToken;
+    }
+}
+
+
+/*
+ * Append non-state event to the coarse single-star evolutionary channel.
+ */
+void BaseStar::AppendEvolutionaryChannelEvent(const std::string& p_Token) {
+
+    AppendEvolutionaryChannelToken(p_Token);
+}
+
+
+/*
+ * Return true if token is a single-star stellar-type state token.
+ */
+bool BaseStar::IsEvolutionaryChannelStateToken(const std::string& p_Token) const {
+
+    if (p_Token.empty()) return false;
+    return std::all_of(p_Token.begin(), p_Token.end(), [](const unsigned char c){ return std::isdigit(c); });
+}
+
+
+/*
+ * Compress an evolutionary channel by replacing maximal runs of consecutive
+ * stellar-type state tokens with their endpoints.  Event tokens act as
+ * barriers and are preserved exactly.
+ */
+std::string BaseStar::CompactEvolutionaryChannel(const std::string& p_Channel) const {
+
+    return EvolutionaryChannelUtils::CompactChannel(
+        p_Channel,
+        [this](const std::string& token) { return IsEvolutionaryChannelStateToken(token); }
+    );
+}
+
+
+/*
+ * Escape evolutionary channel string for logging.
+ */
+std::string BaseStar::EscapeEvolutionaryChannelForLog(const std::string& p_Channel) const {
+
+    return OPTIONS->LogfileType() == LOGFILETYPE::CSV ? EvolutionaryChannelUtils::EscapeForCSV(p_Channel) : p_Channel;
+}
+
+
+/*
+ * Return evolutionary channel string for logging.
+ */
+std::string BaseStar::EvolutionaryChannelForLog() const {
+
+    return EscapeEvolutionaryChannelForLog(m_EvolutionaryChannel);
+}
+
+
+/*
+ * Return compacted evolutionary channel string for logging.
+ */
+std::string BaseStar::EvolutionaryChannelCompactForLog() const {
+
+    return EscapeEvolutionaryChannelForLog(CompactEvolutionaryChannel(m_EvolutionaryChannel));
+}
+
+
+std::string BaseStar::EvolutionaryChannelPropertyForLog(const T_ANY_PROPERTY p_Property) const {
+
+    for (size_t idx = 0; idx < m_EvolutionaryChannelProperties.size(); idx++) {
+        if (m_EvolutionaryChannelProperties[idx] == p_Property) return m_EvolutionaryChannelPropertyChannels[idx];
+    }
+
+    return "";
 }
 
 

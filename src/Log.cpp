@@ -286,6 +286,7 @@ void Log::Start(const string      p_LogBasePathString,
         // BSE
         if (NotesPropertyPresent(m_BSE_CEE_Rec         )) m_BSE_CEE_Notes          = BOOL_VECTOR(m_BSE_CEE_Notes.size(), true);
         if (NotesPropertyPresent(m_BSE_CBD_Rec         )) m_BSE_CBD_Notes          = BOOL_VECTOR(m_BSE_CBD_Notes.size(), true);
+        if (NotesPropertyPresent(m_BSE_Evolutionary_Channels_Rec)) m_BSE_Evolutionary_Channels_Notes = BOOL_VECTOR(m_BSE_Evolutionary_Channels_Notes.size(), true);
         if (NotesPropertyPresent(m_BSE_DCO_Rec         )) m_BSE_DCO_Notes          = BOOL_VECTOR(m_BSE_DCO_Notes.size(), true);
         if (NotesPropertyPresent(m_BSE_Detailed_Rec    )) m_BSE_Detailed_Notes     = BOOL_VECTOR(m_BSE_Detailed_Notes.size(), true);
         if (NotesPropertyPresent(m_BSE_Pulsars_Rec     )) m_BSE_Pulsars_Notes      = BOOL_VECTOR(m_BSE_Pulsars_Notes.size(), true);
@@ -297,6 +298,7 @@ void Log::Start(const string      p_LogBasePathString,
 
         // SSE
         if (NotesPropertyPresent(m_SSE_Detailed_Rec    )) m_SSE_Detailed_Notes     = BOOL_VECTOR(m_SSE_Detailed_Notes.size(), true);
+        if (NotesPropertyPresent(m_SSE_Evolutionary_Channels_Rec)) m_SSE_Evolutionary_Channels_Notes = BOOL_VECTOR(m_SSE_Evolutionary_Channels_Notes.size(), true);
         if (NotesPropertyPresent(m_SSE_Pulsars_Rec     )) m_SSE_Pulsars_Notes      = BOOL_VECTOR(m_SSE_Pulsars_Notes.size(), true);
         if (NotesPropertyPresent(m_SSE_SNE_Rec         )) m_SSE_SNE_Notes          = BOOL_VECTOR(m_SSE_SNE_Notes.size(), true);
         if (NotesPropertyPresent(m_SSE_Switch_Rec      )) m_SSE_Switch_Notes       = BOOL_VECTOR(m_SSE_Switch_Notes.size(), true);
@@ -1970,6 +1972,133 @@ STR_STR_STR_STR Log::FormatFieldHeaders(const PROPERTY_DETAILS p_PropertyDetails
 }
 
 
+
+/*
+ * Return true for properties emitted directly by the BSE_Evolutionary_Channels
+ * logger. These are not sampled through the user-configurable property-channel
+ * mechanism, even if they appear in a logfile definition.
+ */
+bool Log::IsBSEEvolutionaryChannelsHardcodedProperty(const T_ANY_PROPERTY p_Property) const {
+
+    return EvolutionaryChannelUtils::IsBSEHardcodedProperty(p_Property);
+}
+
+
+/*
+ * Format headers for a user-selected BSE_Evolutionary_Channels sampled
+ * property. The underlying COMPAS property supplies the base column name and
+ * units; the evolutionary-channel file stores the sampled sequence as a string
+ * with '_Channel' appended to the normal column name.
+ */
+STR_STR_STR_STR Log::FormatBSEEvolutionaryChannelPropertyHeaders(const T_ANY_PROPERTY p_Property) {
+
+    PROPERTY_DETAILS details;
+    string suffix = "";
+
+    switch (boost::apply_visitor(VariantPropertyType(), p_Property)) {
+        case ANY_PROPERTY_TYPE::T_STAR_PROPERTY: {
+            ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_PROPERTY>(p_Property));
+            details = StellarPropertyDetails(anyStarProp);
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_STAR_1_PROPERTY: {
+            ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_1_PROPERTY>(p_Property));
+            details = StellarPropertyDetails(anyStarProp);
+            suffix = "(1)";
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_STAR_2_PROPERTY: {
+            ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_2_PROPERTY>(p_Property));
+            details = StellarPropertyDetails(anyStarProp);
+            suffix = "(2)";
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_SUPERNOVA_PROPERTY: {
+            ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<SUPERNOVA_PROPERTY>(p_Property));
+            details = StellarPropertyDetails(anyStarProp);
+            suffix = "(SN)";
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_COMPANION_PROPERTY: {
+            ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<COMPANION_PROPERTY>(p_Property));
+            details = StellarPropertyDetails(anyStarProp);
+            suffix = "(CP)";
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_BINARY_PROPERTY: {
+            BINARY_PROPERTY binaryProp = boost::get<BINARY_PROPERTY>(p_Property);
+            details = BinaryPropertyDetails(binaryProp);
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_PROGRAM_OPTION: {
+            PROGRAM_OPTION programOption = boost::get<PROGRAM_OPTION>(p_Property);
+            details = ProgramOptionDetails(programOption);
+            } break;
+
+        default:
+            return std::make_tuple("ERROR!", "ERROR!", "ERROR!", "ERROR!");
+    }
+
+    PROPERTY_DETAILS channelDetails = {
+        TYPENAME::STRING,
+        std::get<1>(details) + suffix + "_Channel",
+        std::get<2>(details),
+        0,
+        1
+    };
+
+    return FormatFieldHeaders(channelDetails);
+}
+
+
+/*
+ * Return true for properties emitted directly by the SSE_Evolutionary_Channels
+ * logger. These are not sampled through the user-configurable property-channel
+ * mechanism, even if they appear in a logfile definition.
+ */
+bool Log::IsSSEEvolutionaryChannelsHardcodedProperty(const T_ANY_PROPERTY p_Property) const {
+
+    return EvolutionaryChannelUtils::IsSSEHardcodedProperty(p_Property);
+}
+
+
+/*
+ * Format headers for a user-selected SSE_Evolutionary_Channels sampled
+ * property. The underlying COMPAS property supplies the base column name and
+ * units; the evolutionary-channel file stores the sampled sequence as a string
+ * with '_Channel' appended to the normal column name.
+ */
+STR_STR_STR_STR Log::FormatSSEEvolutionaryChannelPropertyHeaders(const T_ANY_PROPERTY p_Property) {
+
+    PROPERTY_DETAILS details;
+    string suffix = "";
+
+    switch (boost::apply_visitor(VariantPropertyType(), p_Property)) {
+        case ANY_PROPERTY_TYPE::T_STAR_PROPERTY: {
+            ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_PROPERTY>(p_Property));
+            details = StellarPropertyDetails(anyStarProp);
+            } break;
+
+        case ANY_PROPERTY_TYPE::T_PROGRAM_OPTION: {
+            PROGRAM_OPTION programOption = boost::get<PROGRAM_OPTION>(p_Property);
+            details = ProgramOptionDetails(programOption);
+            } break;
+
+        default:
+            return std::make_tuple("ERROR!", "ERROR!", "ERROR!", "ERROR!");
+    }
+
+    PROPERTY_DETAILS channelDetails = {
+        TYPENAME::STRING,
+        std::get<1>(details) + suffix + "_Channel",
+        std::get<2>(details),
+        0,
+        1
+    };
+
+    return FormatFieldHeaders(channelDetails);
+}
+
 /*
  * Find a value in the LOGFILE_DESCRIPTOR map and return the key if found, otherwise default value
  *
@@ -2077,6 +2206,11 @@ std::tuple<ANY_PROPERTY_VECTOR, STR_VECTOR, BOOL_VECTOR> Log::GetStandardLogFile
                 annotations      = m_BSE_CBD_Notes;                                                                                 // logfile annotations
                 break;
 
+            case LOGFILE::BSE_EVOLUTIONARY_CHANNELS:                                                                                // BSE_EVOLUTIONARY_CHANNELS
+                recordProperties = m_BSE_Evolutionary_Channels_Rec;                                                                 // record properties
+                annotations      = m_BSE_Evolutionary_Channels_Notes;                                                               // logfile annotations
+                break;
+
             case LOGFILE::BSE_DETAILED_OUTPUT:                                                                                      // BSE_DETAILED_OUTPUT
                 recordProperties = m_BSE_Detailed_Rec;                                                                              // record properties
                 annotations      = m_BSE_Detailed_Notes;                                                                            // logfile annotations
@@ -2137,6 +2271,11 @@ std::tuple<ANY_PROPERTY_VECTOR, STR_VECTOR, BOOL_VECTOR> Log::GetStandardLogFile
                 annotations      = m_SSE_Detailed_Notes;                                                                            // logfile annotations
                 break;
 
+            case LOGFILE::SSE_EVOLUTIONARY_CHANNELS:                                                                                // SSE_EVOLUTIONARY_CHANNELS
+                recordProperties = m_SSE_Evolutionary_Channels_Rec;                                                                 // record properties
+                annotations      = m_SSE_Evolutionary_Channels_Notes;                                                               // logfile annotations
+                break;
+
             case LOGFILE::SSE_SUPERNOVAE:                                                                                           // SSE_SUPERNOVAE
                 recordProperties = m_SSE_SNE_Rec;                                                                                   // record properties
                 annotations      = m_SSE_SNE_Notes;                                                                                 // logfile annotations
@@ -2180,6 +2319,26 @@ std::tuple<ANY_PROPERTY_VECTOR, STR_VECTOR, BOOL_VECTOR> Log::GetStandardLogFile
             default:                                                                                                                // unknown logfile
                 recordProperties = {};                                                                                              // no record properties
                 annotations      = {};                                                                                              // no annotations
+        }
+
+        if (p_Logfile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS) {
+            ANY_PROPERTY_VECTOR filteredProperties = {};
+            for (const auto& property : recordProperties) {
+                if (!IsBSEEvolutionaryChannelsHardcodedProperty(property)) filteredProperties.push_back(property);
+            }
+            recordProperties = filteredProperties;
+            fmtVector.assign(recordProperties.size(), "");
+            return std::make_tuple(recordProperties, fmtVector, annotations);
+        }
+
+        if (p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
+            ANY_PROPERTY_VECTOR filteredProperties = {};
+            for (const auto& property : recordProperties) {
+                if (!IsSSEEvolutionaryChannelsHardcodedProperty(property)) filteredProperties.push_back(property);
+            }
+            recordProperties = filteredProperties;
+            fmtVector.assign(recordProperties.size(), "");
+            return std::make_tuple(recordProperties, fmtVector, annotations);
         }
 
         if (!recordProperties.empty()) {                                                                                            // have properties?
@@ -2453,6 +2612,13 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                     fileDetails.annotations      = m_BSE_CBD_Notes;
                     break;
 
+                case LOGFILE::BSE_EVOLUTIONARY_CHANNELS:                                                                                        // BSE_EVOLUTIONARY_CHANNELS
+                    fileDetails.filename         = std::get<0>(LOGFILE_DESCRIPTOR.at(LOGFILE::BSE_EVOLUTIONARY_CHANNELS));
+                    fileDetails.recordTypes      = {1U};
+                    fileDetails.recordProperties = m_BSE_Evolutionary_Channels_Rec;
+                    fileDetails.annotations      = m_BSE_Evolutionary_Channels_Notes;
+                    break;
+
                 case LOGFILE::BSE_DOUBLE_COMPACT_OBJECTS:                                                                                       // BSE_DOUBLE_COMPACT_OBJECTS
                     fileDetails.filename         = OPTIONS->LogfileDoubleCompactObjects();
                     fileDetails.recordTypes      = OPTIONS->LogfileDoubleCompactObjectsRecordTypes();
@@ -2529,6 +2695,13 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                     fileDetails.recordTypes      = -1;
                     fileDetails.recordProperties = m_SSE_Switch_Rec;
                     fileDetails.annotations      = m_SSE_Switch_Notes;
+                    break;
+
+                case LOGFILE::SSE_EVOLUTIONARY_CHANNELS:                                                                                        // SSE_EVOLUTIONARY_CHANNELS
+                    fileDetails.filename         = std::get<0>(LOGFILE_DESCRIPTOR.at(LOGFILE::SSE_EVOLUTIONARY_CHANNELS));
+                    fileDetails.recordTypes      = {1U};
+                    fileDetails.recordProperties = m_SSE_Evolutionary_Channels_Rec;
+                    fileDetails.annotations      = m_SSE_Evolutionary_Channels_Notes;
                     break;
 
                 case LOGFILE::SSE_PULSAR_EVOLUTION:                                                                                             // SSE_PULSAR_EVOLUTION
@@ -2627,7 +2800,7 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                     Squawk(ERR_MSG(ERROR::UNKNOWN_LOGFILE) + ": Logging disabled for this file");                                               // announce error
             }
 
-            if (!fileDetails.filename.empty() && !fileDetails.recordProperties.empty() && fileDetails.recordTypes != 0) {                       // have filename and properties?
+            if (!fileDetails.filename.empty() && (!fileDetails.recordProperties.empty() || p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) && fileDetails.recordTypes != 0) {  // have filename and properties?
 
                 fileDetails.filename += p_FileSuffix;                                                                                           // add suffix to filename
 
@@ -2683,12 +2856,85 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                         default               : delimiter = ""; break;                                                                          // default
                     }
 
+                    auto appendPropertyHeaderDetails = [&](const T_ANY_PROPERTY& property) {
+                        string headerStr = "";
+                        string unitsStr  = "";
+                        string typeStr   = "";
+                        string fmtStr    = "";
+                        PROPERTY_DETAILS details;
+
+                        switch (boost::apply_visitor(VariantPropertyType(), property)) {
+                            case ANY_PROPERTY_TYPE::T_STAR_PROPERTY: {
+                                ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_PROPERTY>(property));
+                                details = StellarPropertyDetails(anyStarProp);
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatFieldHeaders(details);
+                                } break;
+                            case ANY_PROPERTY_TYPE::T_STAR_1_PROPERTY: {
+                                ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_1_PROPERTY>(property));
+                                details = StellarPropertyDetails(anyStarProp);
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatFieldHeaders(details, "(1)");
+                                } break;
+                            case ANY_PROPERTY_TYPE::T_STAR_2_PROPERTY: {
+                                ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_2_PROPERTY>(property));
+                                details = StellarPropertyDetails(anyStarProp);
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatFieldHeaders(details, "(2)");
+                                } break;
+                            case ANY_PROPERTY_TYPE::T_BINARY_PROPERTY: {
+                                BINARY_PROPERTY binaryProp = boost::get<BINARY_PROPERTY>(property);
+                                details = BinaryPropertyDetails(binaryProp);
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatFieldHeaders(details);
+                                } break;
+                            default:
+                                details = { TYPENAME::NONE, "ERROR!", "ERROR!", 0, 0 };
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatFieldHeaders(details);
+                                break;
+                        }
+
+                        fileDetails.propertyTypes.push_back(std::get<0>(details));
+                        fileDetails.stringTypes.push_back(std::get<0>(details) == TYPENAME::STRING && fmtStr.empty()
+                                                          ? STRING_QUALIFIER::VARIABLE_LENGTH
+                                                          : STRING_QUALIFIER::FIXED_LENGTH);
+                        fileDetails.hdrStrings.push_back(headerStr);
+                        fileDetails.unitsStrings.push_back(unitsStr);
+                        fileDetails.typeStrings.push_back(typeStr);
+                        fileDetails.fmtStrings.push_back(fmtStr);
+                    };
+
+                    auto appendStringHeaderDetails = [&](const string& p_Header, const string& p_Units = "-") {
+                        fileDetails.propertyTypes.push_back(TYPENAME::STRING);
+                        fileDetails.stringTypes.push_back(STRING_QUALIFIER::VARIABLE_LENGTH);
+                        fileDetails.hdrStrings.push_back(p_Header);
+                        fileDetails.unitsStrings.push_back(p_Units);
+                        fileDetails.typeStrings.push_back("STRING");
+                        fileDetails.fmtStrings.push_back("");
+                    };
+
+                    if (p_Logfile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS) {
+                        appendPropertyHeaderDetails(BINARY_PROPERTY::RANDOM_SEED);
+                        appendPropertyHeaderDetails(BINARY_PROPERTY::EVOLUTIONARY_CHANNEL_COMPACT);
+                        appendPropertyHeaderDetails(BINARY_PROPERTY::EVOLUTIONARY_CHANNEL);
+                    }
+                    else if (p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
+                        appendPropertyHeaderDetails(STAR_PROPERTY::RANDOM_SEED);
+                        appendStringHeaderDetails("Evolutionary_Channel_Compact");
+                        appendStringHeaderDetails("Evolutionary_Channel");
+                    }
+
                     // get and format field headers for printing; get field format strings
-                    if (!fileDetails.recordProperties.empty()) {
+                    if (!fileDetails.recordProperties.empty() || p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
 
                         for (auto iter = fileDetails.recordProperties.begin(); iter != fileDetails.recordProperties.end();) {                   // for each property to be included in the log record
 
                             T_ANY_PROPERTY property = *iter;                                                                                    // this record property
+
+                            if (p_Logfile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS && IsBSEEvolutionaryChannelsHardcodedProperty(property)) {
+                                iter = fileDetails.recordProperties.erase(iter);
+                                continue;
+                            }
+                            if (p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS && IsSSEEvolutionaryChannelsHardcodedProperty(property)) {
+                                iter = fileDetails.recordProperties.erase(iter);
+                                continue;
+                            }
 
                             string headerStr = "";
                             string unitsStr  = "";
@@ -2699,7 +2945,15 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                             ANY_PROPERTY_TYPE propertyType = boost::apply_visitor(VariantPropertyType(), property);                             // property type
                             PROPERTY_DETAILS  details;                                                                                          // property details
 
-                            switch (propertyType) {                                                                                             // which property type?
+                            if (p_Logfile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS) {
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatBSEEvolutionaryChannelPropertyHeaders(property);
+                                details = { TYPENAME::STRING, headerStr, unitsStr, 0, 1 };
+                            }
+                            else if (p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
+                                std::tie(headerStr, unitsStr, typeStr, fmtStr) = FormatSSEEvolutionaryChannelPropertyHeaders(property);
+                                details = { TYPENAME::STRING, headerStr, unitsStr, 0, 1 };
+                            }
+                            else switch (propertyType) {                                                                                             // which property type?
 
                                 case ANY_PROPERTY_TYPE::T_STAR_PROPERTY: {                                                                      // single star
                                     ANY_STAR_PROPERTY anyStarProp = static_cast<ANY_STAR_PROPERTY>(boost::get<STAR_PROPERTY>(property));        // property
@@ -2787,7 +3041,9 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                             if (push) {                                                                                                         // record details?
                                                                                                                                                 // yes
                                 fileDetails.propertyTypes.push_back(std::get<0>(details));                                                      // append property typename
-                                fileDetails.stringTypes.push_back(STRING_QUALIFIER::FIXED_LENGTH);                                              // append string type - default is fixed length
+                                fileDetails.stringTypes.push_back(std::get<0>(details) == TYPENAME::STRING && fmtStr.empty()
+                                                                  ? STRING_QUALIFIER::VARIABLE_LENGTH
+                                                                  : STRING_QUALIFIER::FIXED_LENGTH);                                              // append string type
                                 fileDetails.hdrStrings.push_back(headerStr);                                                                    // append header string for field
                                 fileDetails.unitsStrings.push_back(unitsStr);                                                                   // append units string for field
                                 fileDetails.typeStrings.push_back(typeStr);                                                                     // append type string for field
@@ -2852,6 +3108,20 @@ LogfileDetailsT Log::StandardLogFileDetails(const LOGFILE p_Logfile, const strin
                             fileDetails.unitsStrings.push_back("-");                                                                            // append units string for field
                             fileDetails.typeStrings.push_back("BOOL");                                                                          // append type string for field
                             fileDetails.fmtStrings.push_back("0.0");                                                                            // append format string for field
+                        }
+
+                        if (p_Logfile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS) {
+                            appendPropertyHeaderDetails(BINARY_PROPERTY::FORMED_DCO);
+                            appendPropertyHeaderDetails(BINARY_PROPERTY::EVOL_STATUS);
+                            appendPropertyHeaderDetails(BINARY_PROPERTY::UNBOUND);
+                            appendPropertyHeaderDetails(BINARY_PROPERTY::STELLAR_MERGER);
+                            appendPropertyHeaderDetails(STAR_1_PROPERTY::STELLAR_TYPE);
+                            appendPropertyHeaderDetails(STAR_2_PROPERTY::STELLAR_TYPE);
+                            appendPropertyHeaderDetails(BINARY_PROPERTY::TIME);
+                        }
+                        else if (p_Logfile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
+                            appendPropertyHeaderDetails(STAR_PROPERTY::EVOL_STATUS);
+                            appendPropertyHeaderDetails(STAR_PROPERTY::STELLAR_TYPE);
                         }
 
                         // we add the record type column to the end of the log record here for all logfiles
@@ -3164,6 +3434,10 @@ void Log::UpdateLogfileRecordSpecs(const LOGFILE             p_Logfile,
             if (p_UseDefaultProps) baseProps = m_BSE_CBD_Rec;
             baseNotes = m_BSE_CBD_Notes;
             break;
+        case LOGFILE::BSE_EVOLUTIONARY_CHANNELS:
+            if (p_UseDefaultProps) baseProps = m_BSE_Evolutionary_Channels_Rec;
+            baseNotes = m_BSE_Evolutionary_Channels_Notes;
+            break;
         case LOGFILE::BSE_DETAILED_OUTPUT:
             if (p_UseDefaultProps) baseProps = m_BSE_Detailed_Rec;
             baseNotes = m_BSE_Detailed_Notes;
@@ -3199,6 +3473,10 @@ void Log::UpdateLogfileRecordSpecs(const LOGFILE             p_Logfile,
         case LOGFILE::SSE_DETAILED_OUTPUT:
             if (p_UseDefaultProps) baseProps = m_SSE_Detailed_Rec;
             baseNotes = m_SSE_Detailed_Notes;
+            break;
+        case LOGFILE::SSE_EVOLUTIONARY_CHANNELS:
+            if (p_UseDefaultProps) baseProps = m_SSE_Evolutionary_Channels_Rec;
+            baseNotes = m_SSE_Evolutionary_Channels_Notes;
             break;
         case LOGFILE::SSE_SUPERNOVAE:
             if (p_UseDefaultProps) baseProps = m_SSE_SNE_Rec;
@@ -3312,6 +3590,7 @@ void Log::UpdateLogfileRecordSpecs(const LOGFILE             p_Logfile,
     switch (p_Logfile) {
         case LOGFILE::BSE_COMMON_ENVELOPES      : m_BSE_CEE_Rec          = newProps; m_BSE_CEE_Notes          = newNotes; break;
         case LOGFILE::BSE_CIRCUMBINARY_DISKS   : m_BSE_CBD_Rec          = newProps; m_BSE_CBD_Notes          = newNotes; break;
+        case LOGFILE::BSE_EVOLUTIONARY_CHANNELS  : m_BSE_Evolutionary_Channels_Rec = newProps; m_BSE_Evolutionary_Channels_Notes = newNotes; break;
         case LOGFILE::BSE_DETAILED_OUTPUT       : m_BSE_Detailed_Rec     = newProps; m_BSE_Detailed_Notes     = newNotes; break;
         case LOGFILE::BSE_DOUBLE_COMPACT_OBJECTS: m_BSE_DCO_Rec          = newProps; m_BSE_DCO_Notes          = newNotes; break;
         case LOGFILE::BSE_PULSAR_EVOLUTION      : m_BSE_Pulsars_Rec      = newProps; m_BSE_Pulsars_Notes      = newNotes; break;
@@ -3321,6 +3600,7 @@ void Log::UpdateLogfileRecordSpecs(const LOGFILE             p_Logfile,
         case LOGFILE::BSE_SYSTEM_SNAPSHOT_LOG   : m_BSE_Sys_Snapshot_Rec = newProps; m_BSE_Sys_Snapshot_Notes = newNotes; break;
         case LOGFILE::BSE_SYSTEM_PARAMETERS     : m_BSE_SysParms_Rec     = newProps; m_BSE_SysParms_Notes     = newNotes; break;
         case LOGFILE::SSE_DETAILED_OUTPUT       : m_SSE_Detailed_Rec     = newProps; m_SSE_Detailed_Notes     = newNotes; break;
+        case LOGFILE::SSE_EVOLUTIONARY_CHANNELS : m_SSE_Evolutionary_Channels_Rec = newProps; m_SSE_Evolutionary_Channels_Notes = newNotes; break;
         case LOGFILE::SSE_SUPERNOVAE            : m_SSE_SNE_Rec          = newProps; m_SSE_SNE_Notes          = newNotes; break;
         case LOGFILE::SSE_SWITCH_LOG            : m_SSE_Switch_Rec       = newProps; m_SSE_Switch_Notes       = newNotes; break;
         case LOGFILE::SSE_PULSAR_EVOLUTION      : m_SSE_Pulsars_Rec      = newProps; m_SSE_Pulsars_Notes      = newNotes; break;

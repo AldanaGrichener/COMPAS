@@ -8,8 +8,14 @@
 #include <chrono>
 #include <iostream>
 #include <iomanip>
+#include <algorithm>
+#include <cmath>
+#include <sstream>
+#include <vector>
 
 #include "constants.h"
+
+#include <boost/variant.hpp>
 
 #include <boost/filesystem.hpp>
 #include <boost/range/algorithm.hpp>
@@ -26,6 +32,190 @@
 #include "LogMacros.h"
 
 using std::string;
+
+namespace EvolutionaryChannelUtils {
+
+static const std::string DELIMITER = "-->";
+
+inline void AppendDelimitedValue(std::string& p_Channel, const std::string& p_Value) {
+    if (!p_Channel.empty()) p_Channel += DELIMITER;
+    p_Channel += p_Value;
+}
+
+inline std::string FormatCompactDouble(const double p_Value) {
+    if (!std::isfinite(p_Value)) return "NA";
+
+    std::ostringstream value;
+
+    if (p_Value != 0.0 && std::abs(p_Value) < 0.01) {
+        value << std::scientific << std::setprecision(3) << p_Value;   // 4 significant digits total
+    }
+    else {
+        value << std::setprecision(4) << p_Value;
+    }
+
+    std::string formatted = value.str();
+
+    const size_t ePos = formatted.find('e');
+    if (ePos != std::string::npos) {
+        std::string mantissa = formatted.substr(0, ePos);
+        std::string exponent = formatted.substr(ePos + 1);
+
+        const size_t dotPos = mantissa.find('.');
+        if (dotPos != std::string::npos) {
+            while (!mantissa.empty() && mantissa.back() == '0') mantissa.pop_back();
+            if (!mantissa.empty() && mantissa.back() == '.') mantissa.pop_back();
+        }
+
+        std::string sign = "";
+        size_t exponentStart = 0;
+        if (!exponent.empty() && (exponent[0] == '+' || exponent[0] == '-')) {
+            if (exponent[0] == '-') sign = "-";
+            exponentStart = 1;
+        }
+        while (exponentStart + 1 < exponent.size() && exponent[exponentStart] == '0') ++exponentStart;
+
+        formatted = mantissa + "e" + sign + exponent.substr(exponentStart);
+    }
+
+    return formatted;
+}
+
+class FormatPropertyValueVisitor: public boost::static_visitor<std::string> {
+public:
+    template <typename T>
+    std::string IntegralString(const T p_Value) const { return std::to_string(static_cast<long long>(p_Value)); }
+
+    std::string operator()(const bool                   v) const { return v ? "1" : "0"; }
+    std::string operator()(const int                    v) const { return IntegralString(v); }
+    std::string operator()(const short int              v) const { return IntegralString(v); }
+    std::string operator()(const long int               v) const { return IntegralString(v); }
+    std::string operator()(const long long int          v) const { return IntegralString(v); }
+    std::string operator()(const unsigned int           v) const { return std::to_string(static_cast<unsigned long long>(v)); }
+    std::string operator()(const unsigned short int     v) const { return std::to_string(static_cast<unsigned long long>(v)); }
+    std::string operator()(const unsigned long int      v) const { return std::to_string(static_cast<unsigned long long>(v)); }
+    std::string operator()(const unsigned long long int v) const { return std::to_string(v); }
+    std::string operator()(const float                  v) const { return FormatCompactDouble(static_cast<double>(v)); }
+    std::string operator()(const double                 v) const { return FormatCompactDouble(v); }
+    std::string operator()(const long double            v) const { return FormatCompactDouble(static_cast<double>(v)); }
+    std::string operator()(const std::string            v) const { return v; }
+    std::string operator()(const ERROR                  v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const STELLAR_TYPE           v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const MT_CASE                v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const MT_TRACKING            v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const MT_TIMESCALE           v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const SN_EVENT               v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const SN_STATE               v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const EVOLUTION_STATUS       v) const { return IntegralString(static_cast<int>(v)); }
+    std::string operator()(const STR_VECTOR             v) const { return v.empty() ? "NA" : v[0]; }
+    std::string operator()(const DBL_VECTOR             v) const { return v.empty() ? "NA" : FormatCompactDouble(v[0]); }
+};
+
+inline std::string FormatPropertyValue(const COMPAS_VARIABLE& p_Value) {
+    return boost::apply_visitor(FormatPropertyValueVisitor(), p_Value);
+}
+
+inline std::vector<std::string> SplitTokens(const std::string& p_Channel) {
+    std::vector<std::string> tokens;
+
+    size_t start = 0;
+    while (start <= p_Channel.size()) {
+        const size_t pos = p_Channel.find(DELIMITER, start);
+        const std::string token = p_Channel.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
+        if (!token.empty()) tokens.push_back(token);
+        if (pos == std::string::npos) break;
+        start = pos + DELIMITER.size();
+    }
+
+    return tokens;
+}
+
+template <typename StateTokenPredicate>
+inline std::string CompactChannel(const std::string& p_Channel, StateTokenPredicate p_IsStateToken) {
+    if (p_Channel.empty()) return p_Channel;
+
+    const std::vector<std::string> tokens = SplitTokens(p_Channel);
+    std::vector<std::string> compactTokens;
+
+    for (size_t i = 0; i < tokens.size(); ) {
+        if (!p_IsStateToken(tokens[i])) {
+            compactTokens.push_back(tokens[i]);
+            ++i;
+            continue;
+        }
+
+        const std::string firstState = tokens[i];
+        std::string lastState = tokens[i];
+        size_t runLength = 1;
+        ++i;
+
+        while (i < tokens.size() && p_IsStateToken(tokens[i])) {
+            lastState = tokens[i];
+            ++runLength;
+            ++i;
+        }
+
+        compactTokens.push_back(firstState);
+        if (runLength > 1 && lastState != firstState) compactTokens.push_back(lastState);
+    }
+
+    std::string compactChannel;
+    for (const std::string& token : compactTokens) AppendDelimitedValue(compactChannel, token);
+
+    return compactChannel;
+}
+
+inline std::string EscapeForCSV(const std::string& p_Channel) {
+    std::string escaped;
+    escaped.reserve(p_Channel.size() + 2);
+
+    for (const char c : p_Channel) {
+        if (c == '"') escaped += "\"\"";
+        else          escaped += c;
+    }
+
+    return "\"" + escaped + "\"";
+}
+
+inline bool IsBSEHardcodedProperty(const T_ANY_PROPERTY p_Property) {
+    const ANY_PROPERTY_TYPE propertyType = boost::apply_visitor(VariantPropertyType(), p_Property);
+
+    if (propertyType == ANY_PROPERTY_TYPE::T_BINARY_PROPERTY) {
+        const BINARY_PROPERTY prop = boost::get<BINARY_PROPERTY>(p_Property);
+        return prop == BINARY_PROPERTY::RANDOM_SEED ||
+               prop == BINARY_PROPERTY::EVOLUTIONARY_CHANNEL ||
+               prop == BINARY_PROPERTY::EVOLUTIONARY_CHANNEL_COMPACT ||
+               prop == BINARY_PROPERTY::FORMED_DCO ||
+               prop == BINARY_PROPERTY::EVOL_STATUS ||
+               prop == BINARY_PROPERTY::UNBOUND ||
+               prop == BINARY_PROPERTY::STELLAR_MERGER;
+    }
+
+    if (propertyType == ANY_PROPERTY_TYPE::T_STAR_1_PROPERTY) {
+        return boost::get<STAR_1_PROPERTY>(p_Property) == STAR_1_PROPERTY::STELLAR_TYPE;
+    }
+
+    if (propertyType == ANY_PROPERTY_TYPE::T_STAR_2_PROPERTY) {
+        return boost::get<STAR_2_PROPERTY>(p_Property) == STAR_2_PROPERTY::STELLAR_TYPE;
+    }
+
+    return false;
+}
+
+inline bool IsSSEHardcodedProperty(const T_ANY_PROPERTY p_Property) {
+    const ANY_PROPERTY_TYPE propertyType = boost::apply_visitor(VariantPropertyType(), p_Property);
+
+    if (propertyType == ANY_PROPERTY_TYPE::T_STAR_PROPERTY) {
+        const STAR_PROPERTY prop = boost::get<STAR_PROPERTY>(p_Property);
+        return prop == STAR_PROPERTY::RANDOM_SEED ||
+               prop == STAR_PROPERTY::EVOL_STATUS ||
+               prop == STAR_PROPERTY::STELLAR_TYPE;
+    }
+
+    return false;
+}
+
+}
 
 // fix for deprecated boost copy_option
 #if BOOST_VERSION >= 107400
@@ -391,7 +581,7 @@ public:
     string operator()(const float                  v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "f"; return utils::vFormat(fmt.c_str(), v); }
     string operator()(const double                 v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "f"; return utils::vFormat(fmt.c_str(), v); }
     string operator()(const long double            v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "f"; return utils::vFormat(fmt.c_str(), v); }
-    string operator()(const string                 v, const string fmtStr) const { string fmt = fmtStr; fmt = "%-" + fmt + "s"; return utils::vFormat(fmt.c_str(), v.c_str()); }
+    string operator()(const string                 v, const string fmtStr) const { if (fmtStr.empty()) return v; string fmt = fmtStr; fmt = "%-" + fmt + "s"; return utils::vFormat(fmt.c_str(), v.c_str()); }
     string operator()(const ERROR                  v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "d"; return utils::vFormat(fmt.c_str(), static_cast<int>(v)); }
     string operator()(const STELLAR_TYPE           v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "d"; return utils::vFormat(fmt.c_str(), static_cast<int>(v)); }
     string operator()(const MT_CASE                v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "d"; return utils::vFormat(fmt.c_str(), static_cast<int>(v)); }
@@ -400,8 +590,8 @@ public:
     string operator()(const SN_EVENT               v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "d"; return utils::vFormat(fmt.c_str(), static_cast<int>(v)); }
     string operator()(const SN_STATE               v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "d"; return utils::vFormat(fmt.c_str(), static_cast<int>(v)); }
     string operator()(const EVOLUTION_STATUS       v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "d"; return utils::vFormat(fmt.c_str(), static_cast<int>(v)); }
-    string operator()(const STR_VECTOR             v, const string fmtStr) const { string fmt = fmtStr; fmt = "%-" + fmt + "s"; return utils::vFormat(fmt.c_str(), v[0].c_str()); }
-    string operator()(const STR_VECTOR             v, const string fmtStr, const size_t idx) const { string fmt = fmtStr; fmt = "%-" + fmt + "s"; return utils::vFormat(fmt.c_str(), v[idx].c_str()); }
+    string operator()(const STR_VECTOR             v, const string fmtStr) const { if (fmtStr.empty()) return v[0]; string fmt = fmtStr; fmt = "%-" + fmt + "s"; return utils::vFormat(fmt.c_str(), v[0].c_str()); }
+    string operator()(const STR_VECTOR             v, const string fmtStr, const size_t idx) const { if (fmtStr.empty()) return v[idx]; string fmt = fmtStr; fmt = "%-" + fmt + "s"; return utils::vFormat(fmt.c_str(), v[idx].c_str()); }
     string operator()(const DBL_VECTOR             v, const string fmtStr) const { string fmt = fmtStr; fmt = "%"  + fmt + "f"; return utils::vFormat(fmt.c_str(), v[0]); }
     string operator()(const DBL_VECTOR             v, const string fmtStr, const size_t idx) const { string fmt = fmtStr; fmt = "%"  + fmt + "f"; return utils::vFormat(fmt.c_str(), v[idx]); }
 };
@@ -571,6 +761,7 @@ private:
     // BSE
     ANY_PROPERTY_VECTOR m_BSE_CEE_Rec          = BSE_COMMON_ENVELOPES_REC;          // default specification
     ANY_PROPERTY_VECTOR m_BSE_CBD_Rec          = BSE_CIRCUMBINARY_DISKS_REC;          // default specification
+    ANY_PROPERTY_VECTOR m_BSE_Evolutionary_Channels_Rec = BSE_EVOLUTIONARY_CHANNELS_REC;       // default specification
     ANY_PROPERTY_VECTOR m_BSE_DCO_Rec          = BSE_DOUBLE_COMPACT_OBJECTS_REC;    // default specification
     ANY_PROPERTY_VECTOR m_BSE_Detailed_Rec     = BSE_DETAILED_OUTPUT_REC;           // default specification
     ANY_PROPERTY_VECTOR m_BSE_Pulsars_Rec      = BSE_PULSAR_EVOLUTION_REC;          // default specification
@@ -582,6 +773,7 @@ private:
 
     // SSE
     ANY_PROPERTY_VECTOR m_SSE_Detailed_Rec     = SSE_DETAILED_OUTPUT_REC;           // default specification
+    ANY_PROPERTY_VECTOR m_SSE_Evolutionary_Channels_Rec = SSE_EVOLUTIONARY_CHANNELS_REC;       // default specification
     ANY_PROPERTY_VECTOR m_SSE_Pulsars_Rec      = SSE_PULSAR_EVOLUTION_REC;          // default specification
     ANY_PROPERTY_VECTOR m_SSE_SNE_Rec          = SSE_SUPERNOVAE_REC;                // default specification
     ANY_PROPERTY_VECTOR m_SSE_Switch_Rec       = SSE_SWITCH_LOG_REC;                // default specification
@@ -605,6 +797,7 @@ private:
     // BSE
     BOOL_VECTOR m_BSE_CEE_Notes          = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_BSE_CBD_Notes          = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
+    BOOL_VECTOR m_BSE_Evolutionary_Channels_Notes = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_BSE_DCO_Notes          = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_BSE_Detailed_Notes     = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_BSE_Pulsars_Notes      = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
@@ -616,6 +809,7 @@ private:
 
     // SSE
     BOOL_VECTOR m_SSE_Detailed_Notes     = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
+    BOOL_VECTOR m_SSE_Evolutionary_Channels_Notes = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_SSE_Pulsars_Notes      = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_SSE_SNE_Notes          = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
     BOOL_VECTOR m_SSE_Switch_Notes       = BOOL_VECTOR(OPTIONS->NotesHdrs().size(), false);
@@ -694,6 +888,10 @@ private:
     PROPERTY_DETAILS BinaryPropertyDetails(const BINARY_PROPERTY p_Property);
     PROPERTY_DETAILS ProgramOptionDetails(const PROGRAM_OPTION p_Property, const size_t p_Idx = 0);
     STR_STR_STR_STR  FormatFieldHeaders(const PROPERTY_DETAILS p_Details, string p_HeaderSuffix = "");
+    STR_STR_STR_STR  FormatBSEEvolutionaryChannelPropertyHeaders(const T_ANY_PROPERTY p_Property);
+    STR_STR_STR_STR  FormatSSEEvolutionaryChannelPropertyHeaders(const T_ANY_PROPERTY p_Property);
+    bool             IsBSEEvolutionaryChannelsHardcodedProperty(const T_ANY_PROPERTY p_Property) const;
+    bool             IsSSEEvolutionaryChannelsHardcodedProperty(const T_ANY_PROPERTY p_Property) const;
     LogfileDetailsT  StandardLogFileDetails(const LOGFILE p_Logfile, const string p_FileSuffix = "");
 
     std::tuple<bool, LOGFILE> GetLogfileDescriptorKey(const string p_Value);
@@ -785,11 +983,37 @@ private:
         COMPAS_VARIABLE value;                                                                                                  // property value
         string          valueStr;                                                                                               // string for formatted value
 
+        auto appendValueToRecord = [&](const COMPAS_VARIABLE& p_Value, const string& p_FmtStr) {
+            if (hdf5) {
+                logRecordValues.push_back(p_Value);
+            }
+            else {
+                valueStr = boost::apply_visitor(FormatVariantValue(), p_Value, boost::variant<string>(p_FmtStr));
+                logRecord += valueStr + delimiter;
+            }
+        };
+
+        auto appendPropertyToRecord = [&](const T_ANY_PROPERTY& p_Property, const string& p_FmtStr) {
+            appendValueToRecord(p_Star->PropertyValue(p_Property), p_FmtStr);
+        };
+
+        if (p_LogFile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS) {
+            appendPropertyToRecord(BINARY_PROPERTY::RANDOM_SEED, "12.1");
+            appendPropertyToRecord(BINARY_PROPERTY::EVOLUTIONARY_CHANNEL_COMPACT, "");
+            appendPropertyToRecord(BINARY_PROPERTY::EVOLUTIONARY_CHANNEL, "");
+        }
+        else if (p_LogFile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
+            appendPropertyToRecord(STAR_PROPERTY::RANDOM_SEED, "12.1");
+            appendValueToRecord(boost::variant<string>(p_Star->EvolutionaryChannelCompactForLog()), "");
+            appendValueToRecord(boost::variant<string>(p_Star->EvolutionaryChannelForLog()), "");
+        }
+
         int index = 0;
         for (auto &property : p_RecordProperties) {                                                                             // for each property to be included in the log record
             ANY_PROPERTY_TYPE thisPropertyType = boost::apply_visitor(VariantPropertyType(), property);                         // get property type for this property
             
-            boost::variant<string> fmtStr(p_FmtVector[index++]);                                                                // format string for this property
+            const bool evolutionaryChannelsLog = p_LogFile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS || p_LogFile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS;
+            boost::variant<string> fmtStr(evolutionaryChannelsLog ? "" : p_FmtVector[index++]);                                  // format string for this property
 
             // program option NOTES is special...
             //
@@ -850,7 +1074,12 @@ private:
                     }
                 }
                 else {                                                                                                          // use current value
-                    value = p_Star->PropertyValue(property);                                                                    // get property value
+                    if (p_LogFile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS || p_LogFile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {                         // Evolutionary_Channels samples requested properties as strings
+                        value = boost::variant<string>(p_Star->EvolutionaryChannelPropertyForLog(property));
+                    }
+                    else {
+                        value = p_Star->PropertyValue(property);                                                                            // get property value
+                    }
                     if (ok) {                                                                                                   // have valid property value
                         if (hdf5) {                                                                                             // yes - HDF5 file?
                             logRecordValues.push_back(value);                                                                   // yes - add value to vector of values
@@ -872,6 +1101,20 @@ private:
         }
 
         if (ok) {
+
+            if (p_LogFile == LOGFILE::BSE_EVOLUTIONARY_CHANNELS) {
+                appendPropertyToRecord(BINARY_PROPERTY::FORMED_DCO, "0.0");
+                appendPropertyToRecord(BINARY_PROPERTY::EVOL_STATUS, "14.1");
+                appendPropertyToRecord(BINARY_PROPERTY::UNBOUND, "0.0");
+                appendPropertyToRecord(BINARY_PROPERTY::STELLAR_MERGER, "0.0");
+                appendPropertyToRecord(STAR_1_PROPERTY::STELLAR_TYPE, "14.1");
+                appendPropertyToRecord(STAR_2_PROPERTY::STELLAR_TYPE, "14.1");
+                appendPropertyToRecord(BINARY_PROPERTY::TIME, "24.15");
+            }
+            else if (p_LogFile == LOGFILE::SSE_EVOLUTIONARY_CHANNELS) {
+                appendPropertyToRecord(STAR_PROPERTY::EVOL_STATUS, "14.1");
+                appendPropertyToRecord(STAR_PROPERTY::STELLAR_TYPE, "14.1");
+            }
 
             // if we are writing to the SSE Switch file we add two pre-defined columns to 
             // the log record.  These are:
@@ -1212,12 +1455,23 @@ public:
     bool CloseStandardFile(const LOGFILE p_LogFile, const bool p_Erase = true);
     bool CloseAllStandardFiles();
 
+    ANY_PROPERTY_VECTOR BSEEvolutionaryChannelProperties() const { return m_BSE_Evolutionary_Channels_Rec; }
+    ANY_PROPERTY_VECTOR SSEEvolutionaryChannelProperties() const { return m_SSE_Evolutionary_Channels_Rec; }
+
     std::tuple<ANY_PROPERTY_VECTOR, STR_VECTOR, BOOL_VECTOR> GetStandardLogFileRecordDetails(const LOGFILE p_Logfile);
 
     template <class T>
     bool LogBSEDetailedOutput(const T* const p_Binary, 
                               const long int p_Id,
                               const BSE_DETAILED_RECORD_TYPE p_RecordType)          { return LogStandardRecord(std::get<2>(LOGFILE_DESCRIPTOR.at(LOGFILE::BSE_DETAILED_OUTPUT)), 0, LOGFILE::BSE_DETAILED_OUTPUT, static_cast<LOGRECORDTYPE>(p_RecordType), p_Binary, "_" + std::to_string(abs(p_Id))); }
+
+    template <class T>
+    bool LogBSEEvolutionaryChannels(const T* const p_Binary,
+                                    const BSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE p_RecordType) { return LogStandardRecord(std::get<2>(LOGFILE_DESCRIPTOR.at(LOGFILE::BSE_EVOLUTIONARY_CHANNELS)), 0, LOGFILE::BSE_EVOLUTIONARY_CHANNELS, static_cast<LOGRECORDTYPE>(p_RecordType), p_Binary); }
+
+    template <class T>
+    bool LogSSEEvolutionaryChannels(const T* const p_Star,
+                                    const SSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE p_RecordType) { return LogStandardRecord(std::get<2>(LOGFILE_DESCRIPTOR.at(LOGFILE::SSE_EVOLUTIONARY_CHANNELS)), 0, LOGFILE::SSE_EVOLUTIONARY_CHANNELS, static_cast<LOGRECORDTYPE>(p_RecordType), p_Star); }
 
     template <class T>
     bool LogBSEPulsarEvolutionParameters(const T* const p_Binary,
@@ -1246,7 +1500,6 @@ public:
     bool LogCommonEnvelope(const T* const p_Binary,
                            const CE_RECORD_TYPE p_RecordType)                           { return LogStandardRecord(std::get<2>(LOGFILE_DESCRIPTOR.at(LOGFILE::BSE_COMMON_ENVELOPES)), 0, LOGFILE::BSE_COMMON_ENVELOPES, static_cast<LOGRECORDTYPE>(p_RecordType), p_Binary); }
 
-    // Write one circumbinary-disk event to the standard CBD logfile.
     template <class T>
     bool LogCircumbinaryDisk(const T* const p_Binary)                                    { return LogStandardRecord(std::get<2>(LOGFILE_DESCRIPTOR.at(LOGFILE::BSE_CIRCUMBINARY_DISKS)), 0, LOGFILE::BSE_CIRCUMBINARY_DISKS, 1U, p_Binary); }
 

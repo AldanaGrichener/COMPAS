@@ -1016,6 +1016,7 @@ public:
 
             // Supernova remnant mass
             ENUM_OPT<REMNANT_MASS_PRESCRIPTION>                 m_RemnantMassPrescription;                                      // Which remnant mass prescription
+            double                                              m_MullerMandelMu2b;                                              // mu_2b coefficient in the Mandel & Mueller (2020) NS remnant-mass prescription
 
             ENUM_OPT<SN_ENGINE>                                 m_FryerSupernovaEngine;                                         // Which Fryer et al. supernova engine
 
@@ -1701,6 +1702,7 @@ public:
 
     double                                      MinimumSampledSecondaryMass() const                                     { return OPT_VALUE("minimum-sampled-secondary-mass", m_MinimumSampledSecondaryMass, true); }
 
+    double                                      MullerMandelMu2b() const                                                { return OPT_VALUE("muller-mandel-mu2b", m_MullerMandelMu2b, true); }
     double                                      MullerMandelKickMultiplierBH() const                                    { return OPT_VALUE("muller-mandel-kick-multiplier-BH", m_MullerMandelKickBH, true); }
     double                                      MullerMandelKickMultiplierNS() const                                    { return OPT_VALUE("muller-mandel-kick-multiplier-NS", m_MullerMandelKickNS, true); }
     double                                      MullerMandelSigmaKickBH() const                                         { return OPT_VALUE("muller-mandel-sigma-kick-BH", m_MullerMandelSigmaKickBH, true); }

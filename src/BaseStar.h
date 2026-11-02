@@ -138,6 +138,13 @@ public:
     double              OmegaBreak() const                                              { return CalculateOmegaBreak(); }
     double              OmegaZAMS() const                                               { return m_OmegaZAMS; }
     COMPAS_VARIABLE     PropertyValue(const T_ANY_PROPERTY p_Property) const;
+
+    std::string         EvolutionaryChannel() const                                      { return m_EvolutionaryChannel; }
+    std::string         EvolutionaryChannelCompact() const                               { return CompactEvolutionaryChannel(m_EvolutionaryChannel); }
+    std::string         EvolutionaryChannelForLog() const;
+    std::string         EvolutionaryChannelCompactForLog() const;
+    std::string         EvolutionaryChannelPropertyForLog(const T_ANY_PROPERTY p_Property) const;
+
     double              PulsarMagneticField() const                                     { return m_PulsarDetails.magneticField; }
     double              PulsarSpinPeriod() const                                        { return m_PulsarDetails.spinPeriod; }
     double              PulsarSpinFrequency() const                                     { return m_PulsarDetails.spinFrequency; }
@@ -365,6 +372,10 @@ public:
     virtual void            UpdateTotalMassLossRate(const double p_MassLossRate)                                { m_TotalMassLossRate = p_MassLossRate; }                           // m_TotalMassLossRate = -m_Mdot in SSE, during a mass transfer episode m_TotalMassLossRate = m_MassLossRateInRLOF
     
     // printing functions
+    void RecordEvolutionaryChannelEvent(const std::string& p_Token)       { AppendEvolutionaryChannelEvent(p_Token); }
+    void RecordEvolutionaryChannelFinalSnapshot()                         { AppendEvolutionaryChannelPhysicalSnapshot(); }
+    void RecordEvolutionaryChannelState()                                 { AppendEvolutionaryChannelState(); }
+
     bool PrintDetailedOutput(const int p_Id, const SSE_DETAILED_RECORD_TYPE p_RecordType) const { 
         return OPTIONS->DetailedOutput() ? LOGGING->LogSSEDetailedOutput(this, p_Id, p_RecordType) : true;                                                                          // Write record to SSE Detailed Output log file
     }
@@ -381,6 +392,10 @@ public:
         return OPTIONS->SwitchLog() ? (LOGGING->ObjectSwitchingPersistence() == OBJECT_PERSISTENCE::PERMANENT ? LOGGING->LogSSESwitchLog(this) : true) : true;                      // Write record to SSE Switchlog log file
     }
 
+    bool PrintEvolutionaryChannels(const SSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE p_RecordType = SSE_EVOLUTIONARY_CHANNELS_RECORD_TYPE::DEFAULT) const {
+        return LOGGING->LogSSEEvolutionaryChannels(this, p_RecordType);
+    }
+
     bool PrintSystemSnapshotLog(const SSE_SYSTEM_SNAPSHOT_RECORD_TYPE p_RecordType = SSE_SYSTEM_SNAPSHOT_RECORD_TYPE::DEFAULT) const {
         return LOGGING->LogSSESystemSnapshotLog(this, p_RecordType);                                                                                                                // Write record to SSE System Parameters file
     }
@@ -390,6 +405,17 @@ public:
     }
 
 protected:
+
+    void        AppendEvolutionaryChannelEvent(const std::string& p_Token);
+    void        AppendEvolutionaryChannelPhysicalSnapshot();
+    void        AppendEvolutionaryChannelState();
+    void        AppendEvolutionaryChannelToken(const std::string& p_Token);
+    std::string CompactEvolutionaryChannel(const std::string& p_Channel) const;
+    std::string EscapeEvolutionaryChannelForLog(const std::string& p_Channel) const;
+    std::string EvolutionaryChannelStateToken() const;
+    void        InitialiseEvolutionaryChannelPropertyChannels();
+    bool        IsEvolutionaryChannelHardcodedLogProperty(const T_ANY_PROPERTY p_Property) const;
+    bool        IsEvolutionaryChannelStateToken(const std::string& p_Token) const;
 
     OBJECT_ID               m_ObjectId;                                 // Instantiated object's unique object id
     OBJECT_PERSISTENCE      m_ObjectPersistence;                        // Instantiated object's persistence (permanent or ephemeral)
@@ -403,6 +429,12 @@ protected:
     bool                    m_CHE;                                      // CHE flag - true if the star spent entire MS as a CH star; false if evolved CH->MS
 
     EVOLUTION_STATUS        m_EvolutionStatus;                          // Status of evolution for this star (typically final outcome e.g. DONE, TIMES_UP, etc.)
+
+    std::string             m_EvolutionaryChannel;                       // Coarse single-star evolutionary channel
+    std::string             m_EvolutionaryChannelLastToken;              // Last token appended to the evolutionary channel
+    std::string             m_EvolutionaryChannelLastStateToken;         // Last stellar-type state token appended to the evolutionary channel
+    ANY_PROPERTY_VECTOR     m_EvolutionaryChannelProperties;             // User-selected properties sampled at each evolutionary-channel token
+    STR_VECTOR              m_EvolutionaryChannelPropertyChannels;       // Sampled property values aligned with m_EvolutionaryChannelProperties
     
     // Stellar variables
     unsigned long int       m_RandomSeed;                               // Seeds the random number generator for this star

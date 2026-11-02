@@ -1482,7 +1482,7 @@ double GiantBranch::CalculateRemnantNSMassMullerMandel(const double p_COCoreMass
                (utils::Compare(remnantMass, MULLERMANDEL_MINNS) < 0                ||
                 utils::Compare(remnantMass, OPTIONS->MaximumNeutronStarMass()) > 0 ||
                 utils::Compare(remnantMass, p_COCoreMass) > 0)) {
-            remnantMass = MULLERMANDEL_MU2A + MULLERMANDEL_MU2B / (MULLERMANDEL_M2 - MULLERMANDEL_M1) * (p_COCoreMass - MULLERMANDEL_M1) + RAND->RandomGaussian(MULLERMANDEL_SIGMA2);
+            remnantMass = MULLERMANDEL_MU2A + OPTIONS->MullerMandelMu2b() / (MULLERMANDEL_M2 - MULLERMANDEL_M1) * (p_COCoreMass - MULLERMANDEL_M1) + RAND->RandomGaussian(MULLERMANDEL_SIGMA2);
         }
         if (iterations >= MULLERMANDEL_REMNANT_MASS_MAX_ITERATIONS) // failure to find a solution implies a narrow range; just pick a midpoint in this case
             remnantMass = (std::min(OPTIONS->MaximumNeutronStarMass(), p_COCoreMass) + MULLERMANDEL_MINNS) / 2.0;
